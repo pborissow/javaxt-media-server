@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project
+    xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    
+    <modelVersion>4.0.0</modelVersion>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <exec.mainClass>javaxt.media.server.Main</exec.mainClass>
+    </properties>
+
+
+
+  <!-- =========================================================== -->
+  <!--     Module Description                                      -->
+  <!-- =========================================================== -->
+    <groupId>javaxt</groupId>
+    <artifactId>media-server</artifactId>
+    <version>dev</version>
+    <packaging>jar</packaging>
+
+
+
+  <!-- =========================================================== -->
+  <!--     Dependency Management                                   -->
+  <!-- =========================================================== -->
+    <repositories>
+      <repository>
+        <id>javaxt.com</id>
+        <url>https://www.javaxt.com/maven</url>
+      </repository>
+    </repositories>
+    <dependencies>
+
+      <!-- JavaXT Express -->
+      <dependency>
+        <groupId>javaxt</groupId>
+        <artifactId>javaxt-express</artifactId>
+        <version>1.5.1</version>
+      </dependency>
+
+
+      <!-- OpenCV -->
+      <dependency>
+        <groupId>org.openpnp</groupId>
+        <artifactId>opencv</artifactId>
+        <version>4.9.0-0</version>
+      </dependency>
+
+    </dependencies>
+
+
+
+  <!-- =========================================================== -->
+  <!--     Build Info                                              -->
+  <!-- =========================================================== -->
+  <build>
+
+      <!-- Build app and move to the "dist" folder -->
+      <plugins>
+
+
+        <!-- Copy dependencies into the "dist/lib" folder -->
+        <plugin>
+          <artifactId>maven-dependency-plugin</artifactId>
+          <executions>
+            <execution>
+              <phase>install</phase>
+              <goals>
+                <goal>copy-dependencies</goal>
+              </goals>
+              <configuration>
+                <outputDirectory>${project.basedir}/dist/lib</outputDirectory>
+              </configuration>
+            </execution>
+          </executions>
+        </plugin>
+
+
+        <!-- Create manifest -->
+        <plugin>
+          <artifactId>maven-jar-plugin</artifactId>
+          <configuration>
+            <archive>
+              <manifest>
+                <addClasspath>true</addClasspath>
+                <classpathPrefix>lib/</classpathPrefix>
+                <mainClass>javaxt.media.server.Main</mainClass>
+              </manifest>
+            </archive>
+          </configuration>
+        </plugin>
+
+
+        <!-- Move jar to the dist directory -->
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-antrun-plugin</artifactId>
+          <version>1.8</version>
+          <executions>
+            <execution>
+              <id>move-jar</id>
+              <phase>install</phase>
+              <configuration>
+                <target>
+                  <move
+                    file="${project.build.directory}/${project.artifactId}-${project.version}.jar"
+                    tofile="${project.basedir}/dist/media-server.jar"
+                  />
+                </target>
+              </configuration>
+              <goals>
+                <goal>run</goal>
+              </goals>
+            </execution>
+          </executions>
+        </plugin>
+      </plugins>
+
+  </build>
+
+</project>
