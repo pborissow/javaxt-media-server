@@ -1,28 +1,32 @@
+# Ignore build artifacts
 /dist/
 /build/
 /target/
 
-/nbproject/
-/.vscode/
 
+# Ignore IDE stuff
+/.vscode/
+/.idea/
+/nbproject/
 build.xml
 manifest.mf
 
+
+# Ignore config file
 config.json
 
 
+# Ignore data directory
+/data
 
+
+# Ignore any log files or directories
 /logs/
 *.log
 
 
+# Misc
 *.DS_Store
 *.dll
 **/!README.TXT
-
-
 __pycache__/
-
-
-/web/
-/data/
