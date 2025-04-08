@@ -223,7 +223,7 @@ public class WebApp extends HttpServlet {
 
                     final WebSocketListener me = this;
                     try{
-                        wc = new WebSocketClient(new java.net.URI(wss), new Draft_6455(), headers, 0, true){
+                        wc = new WebSocketClient(new java.net.URI(wss), new Draft_6455(), headers, 0){
 
                             public void onMessage( String message ) {
                                 me.send(message);
