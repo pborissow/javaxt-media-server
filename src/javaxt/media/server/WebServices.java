@@ -190,9 +190,8 @@ public class WebServices extends WebService {
           //Send image
             try (ByteArrayOutputStream output = new ByteArrayOutputStream()){
                 thumbnail.getImage(thumbnailID, output);
-                ByteArrayInputStream input = new ByteArrayInputStream(output.toByteArray());
-                ServiceResponse response = new ServiceResponse(input);
-                response.setCacheControl("public, max-age=31536000, immutable");
+                ServiceResponse response = new ServiceResponse(output.toByteArray());
+                //response.setCacheControl("public, max-age=31536000, immutable");
                 response.setContentType("image/jpeg");
                 response.setDate(lastModified);
                 return response;
@@ -439,7 +438,7 @@ public class WebServices extends WebService {
 
 
           //Send the response to the client
-            rsp.send(response, req);
+            rsp.send(response);
         }
 
     }
