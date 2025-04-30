@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import javaxt.io.Jar;
 import javaxt.json.JSONObject;
 import javaxt.utils.ThreadPool;
-import static javaxt.utils.Console.console;
+import static javaxt.utils.Console.*;
 
 import javaxt.express.*;
 import javaxt.express.utils.*;
@@ -40,7 +40,7 @@ public class Main {
   /** Entry point for the application
    */
     public static void main(String[] arguments) throws Exception {
-        HashMap<String, String> args = console.parseArgs(arguments);
+        HashMap<String, String> args = parseArgs(arguments);
 
 
       //Get jar file and schema
@@ -166,12 +166,7 @@ public class Main {
 
       //Set number of threads (optional)
         Integer maxThreads = webConfig.get("maxThreads").toInteger();
-        if (args.containsKey("-t")){
-            try{
-                maxThreads = Integer.parseInt(args.get("-t"));
-            }
-            catch(Exception e){}
-        }
+        if (maxThreads==null) maxThreads = getValue(args, "--threads", "-t").toInteger();
         if (maxThreads==null || maxThreads<0) maxThreads = 250;
 
 
@@ -283,6 +278,16 @@ public class Main {
             if (dir==null) return;
             Maintanence.deleteThumbnails(dir);
         }
+        else if (delete.equals("orphans")){
+
+            Integer numThreads = getValue(args, "--threads", "-t").toInteger();
+            if (numThreads==null || numThreads<0) numThreads = 4;
+
+            Config.initModels();
+
+            FileIndex fileIndex = new FileIndex(null, null, null, Config.getDatabase());
+            fileIndex.deleteOrphans(numThreads);
+        }
         else{
             System.out.println("Invalid -delete");
         }
@@ -302,8 +307,8 @@ public class Main {
 
 
       //Get thread count
-        int numThreads = 4;
-        try{numThreads = Integer.parseInt(args.get("-t"));}catch(Exception e){}
+        Integer numThreads = getValue(args, "--threads", "-t").toInteger();
+        if (numThreads==null || numThreads<0) numThreads = 4;
 
 
       //Instantiate command line apps
@@ -403,8 +408,9 @@ public class Main {
         }
         else{
 
-            int numThreads = 4;
-            try{numThreads = Integer.parseInt("-t");}catch(Exception e){}
+            Integer numThreads = getValue(args, "--threads", "-t").toInteger();
+            if (numThreads==null || numThreads<0) numThreads = 4;
+
             ThreadPool pool = new ThreadPool(numThreads, 200){
                 public void process(Object obj){
                     javaxt.io.File file = (javaxt.io.File) obj;
