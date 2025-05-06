@@ -58,8 +58,16 @@ public class WebServices extends WebService {
 
       //Instantiate web services
         webservices = new ConcurrentHashMap<>();
-        webservices.put("sql", new QueryService(database,
-            new javaxt.io.Directory(Config.get("temp").toString()), null));
+        try{
+            webservices.put("sql", new QueryService(database,
+                new javaxt.io.Directory(Config.get("temp").toString()), null)
+            );
+        }
+        catch(Exception e){
+            var msg = e.getMessage();
+            if (msg==null) e.printStackTrace();
+            else console.log(msg);
+        }
 
 
       //Websocket stuff

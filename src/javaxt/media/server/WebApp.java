@@ -13,10 +13,10 @@ import javaxt.io.Directory;
 import javaxt.http.servlet.*;
 import javaxt.utils.ThreadPool;
 import javaxt.express.utils.DateUtils;
+import static javaxt.utils.Console.console;
 import static javaxt.utils.Timer.setInterval;
 import javaxt.http.websocket.WebSocketListener;
 import javaxt.express.notification.NotificationService;
-import static javaxt.utils.Console.console;
 
 
 import org.java_websocket.drafts.Draft_6455;
@@ -46,40 +46,46 @@ public class WebApp extends HttpServlet {
   //** Constructor
   //**************************************************************************
     public WebApp() throws Exception {
-
-      //Start the NotificationService
-        NotificationService.start();
-
-
-
-      //Instantiate WebServices
-        String remoteHost = Config.get("remoteHost").toString();
-        if (remoteHost==null) ws = new WebServices(Config.getDatabase());
+        try{
+            
+          //Start the NotificationService
+            NotificationService.start();
 
 
 
-      //Instantiate the FileManager
-        JSONObject webConfig = Config.get("webapp").toJSONObject();
-        if (webConfig!=null){
-            String webDir = webConfig.get("webDir").toString();
-            javaxt.io.Directory dir = new javaxt.io.Directory(webDir);
-            if (dir.exists()){
-                web = dir;
-
-              //Instantiate EventProcessor
-                eventProcessor = new EventProcessor();
+          //Instantiate WebServices
+            String remoteHost = Config.get("remoteHost").toString();
+            if (remoteHost==null) ws = new WebServices(Config.getDatabase());
 
 
-              //Instantiate FileManager
-                fileManager = new FileManager(web);
+
+          //Instantiate the FileManager
+            JSONObject webConfig = Config.get("webapp").toJSONObject();
+            if (webConfig!=null){
+                String webDir = webConfig.get("webDir").toString();
+                javaxt.io.Directory dir = new javaxt.io.Directory(webDir);
+                if (dir.exists()){
+                    web = dir;
+
+                  //Instantiate EventProcessor
+                    eventProcessor = new EventProcessor();
 
 
-              //Watch for changes to the web directory
-                fileManager.getFileUpdates((Directory.Event event) -> {
-                    eventProcessor.processEvent(event);
-                });
+                  //Instantiate FileManager
+                    fileManager = new FileManager(web);
 
+
+                  //Watch for changes to the web directory
+                    fileManager.getFileUpdates((Directory.Event event) -> {
+                        eventProcessor.processEvent(event);
+                    });
+
+                }
             }
+        }
+        catch(Exception e){
+            NotificationService.stop();
+            throw e;
         }
     }
 
