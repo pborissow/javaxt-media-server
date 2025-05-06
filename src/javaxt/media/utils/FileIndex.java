@@ -2,10 +2,10 @@ package javaxt.media.utils;
 
 import java.awt.*;
 import java.util.*;
+import java.util.stream.*;
 import java.sql.PreparedStatement;
-import java.util.stream.Collectors;
 import java.awt.image.BufferedImage;
-import javaxt.express.notification.NotificationService;
+import java.util.concurrent.ConcurrentHashMap;
 
 
 import javaxt.sql.*;
@@ -14,6 +14,7 @@ import javaxt.utils.ThreadPool;
 import javaxt.media.utils.OpenCV.Face;
 import static javaxt.utils.Console.console;
 import static javaxt.media.utils.ImageUtils.*;
+import javaxt.express.notification.NotificationService;
 
 import org.opencv.objdetect.FaceDetectorYN;
 
@@ -22,7 +23,7 @@ import org.opencv.objdetect.FaceDetectorYN;
 //**  FileIndex Class
 //******************************************************************************
 /**
- *   Used to index images and videos on a local drive
+ *   Used to index and manage media files (images and videos) on a local drive.
  *
  ******************************************************************************/
 
@@ -235,109 +236,538 @@ public class FileIndex {
   //** deleteOrphans
   //**************************************************************************
   /** Checks whether files in the database still exist on disk. If not, the
-   *  files are deleted from the database. If the corresponding media item is
-   *  left without any files, the media item and thumbnail are deleted as
-   *  well. Similarly, any paths that are left without files are removed from
-   *  the database.
+   *  files are deleted from the database. If the file belongs to a media item
+   *  and the media item is left without any files, the media item is deleted
+   *  from the database. Similarly, any paths that are left without files
+   *  and empty folders are removed from the database.
    */
     public void deleteOrphans(int numThreads) throws Exception {
 
+        var mediaIDs = new ConcurrentHashMap<Long, Boolean>();
+        var pathIDs = new ConcurrentHashMap<Long, Boolean>();
 
-      //Start thread pool used to create media items
+
+      //Start thread pool used to delete files
         int poolSize = 1000;
         ThreadPool pool = new ThreadPool(numThreads, poolSize){
+
+          //Process files
             public void process(Object obj){
-                Long fileID = (Long) obj;
+                var arr = (Long[]) obj;
+                var fileID = arr[0];
+                var pathID = arr[1];
 
                 try (Connection conn = database.getConnection()){
 
-                    javaxt.sql.Record record = conn.getRecord(
-                        "select name, extension, dir, path_id from file " +
-                        "join path on file.path_id=path.id " +
-                        "where file.id = " + fileID
-                    );
-
-                    if (record!=null){
-                        String fileName = record.get("name").toString();
-                        String fileExt = record.get("extension").toString();
-                        String dir = record.get("dir").toString();
-                        Long pathID = record.get("path_id").toLong();
-
-                        javaxt.io.File file = new javaxt.io.File(
-                            new javaxt.io.Directory(dir), fileName + "." + fileExt
-                        );
+                  //Get file. Return early if the file exists
+                    javaxt.io.File file = getFile(fileID, conn);
+                    if (file.exists()) return;
 
 
-                        if (!file.exists()){
-
-
-                          //Generate a list of media items that use this file
-                            HashSet<Long> mediaIDs = new HashSet<>();
-                            for (javaxt.sql.Record r : conn.getRecords(
-                                "select distinct(MEDIA_ITEM_ID) from MEDIA_ITEM_FILE " +
-                                "where FILE_ID=" + fileID)){
-                                mediaIDs.add(r.get(0).toLong());
-                            }
-
-
-                          //Delete entry from the database
-                            conn.execute("delete from file where id=" + fileID);
-
-
-
-                          //Delete media items with no files
-                            for (Long mediaID : mediaIDs){
-                                record = conn.getRecord(
-                                    "select count(*) from MEDIA_ITEM_FILE " +
-                                    "where MEDIA_ITEM_ID = " + mediaID
-                                );
-                                if (record==null || record.get(0).toLong().longValue()==0){
-
-                                  //Delete record from the database
-                                    conn.execute("delete from MEDIA_ITEM where ID=" + mediaID);
-
-                                  //Delete thumbnail
-                                    String path = getThumbnailDirectory(file) + file.getName(false) + "." + thumbnailFileExtension;
-                                    new javaxt.io.File(path).delete();
-                                }
-                            }
-
-
-
-                          //Delete paths without any files
-                            record = conn.getRecord(
-                                "select count(*) from FILE " +
-                                "where PATH_ID = " + pathID
-                            );
-                            if (record==null || record.get(0).toLong().longValue()==0){
-                                conn.execute("delete from PATH where ID=" + pathID);
-                            }
-
-                        }
+                  //Update local mediaIDs
+                    var mediaIDs = (HashSet<Long>) get("mediaIDs", () -> {
+                        return new HashSet<Long>();
+                    });
+                    for (javaxt.sql.Record r : conn.getRecords(
+                        "select distinct(MEDIA_ITEM_ID) from MEDIA_ITEM_FILE " +
+                        "where FILE_ID=" + fileID)){
+                        mediaIDs.add(r.get(0).toLong());
                     }
 
+
+                  //Delete entry from the database
+                    conn.execute("delete from file where id=" + fileID);
+
+
+                  //Update local pathIDs
+                    var pathIDs = (HashSet<Long>) get("pathIDs", () -> {
+                        return new HashSet<Long>();
+                    });
+                    pathIDs.add(pathID);
 
                 }
                 catch(Exception e){
                     e.printStackTrace();
                 }
             }
+
+
+          //Update shared hashmaps on exit
+            public void exit(){
+                synchronized(mediaIDs){
+                    for (long mediaID : (HashSet<Long>) get("mediaIDs")){
+                        mediaIDs.put(mediaID, Boolean.FALSE);
+                    }
+                }
+                synchronized(pathIDs){
+                    for (long pathID : (HashSet<Long>) get("pathIDs")){
+                        pathIDs.put(pathID, Boolean.FALSE);
+                    }
+                }
+            }
+
         }.start();
 
 
-
+      //Add records to the pool
         try (Connection conn = database.getConnection()){
-            for (javaxt.sql.Record record : conn.getRecords("select id from file")){
-                pool.add(record.get(0).toLong());
+            for (javaxt.sql.Record record : conn.getRecords(
+                "select id, path_id from file")){
+                var fileID = record.get("id").toLong();
+                var pathID = record.get("path_id").toLong();
+                pool.add(new Long[]{fileID, pathID});
             }
         }
 
 
+      //Notify threads that we are done adding records to the queue and wait
+      //for the threads to complete
         pool.done();
         pool.join();
 
+
+
+      //Delete media items and paths with no files
+        try (Connection conn = database.getConnection()){
+
+          //Delete media items with no files
+            for (Long mediaID : mediaIDs.keySet()){
+
+              //Get number of files associated with this media item
+                int numFiles = conn.getRecord(
+                    "select count(*) from MEDIA_ITEM_FILE " +
+                    "where MEDIA_ITEM_ID = " + mediaID
+                ).get(0).toInteger();
+
+
+              //If there's only one file, and the file is a thumbnail, delete it
+                if (numFiles==1){
+                    var record = conn.getRecord(
+                    "select file.id, file.name, file.extension, path.id, dir from media_item_file " +
+                    "join file on media_item_file.file_id=file.id "+
+                    "join path on file.path_id=path.id " +
+                    "where media_item_id="+mediaID);
+
+                    var fileExtension = record.get("file.extension").toString();
+                    if (fileExtension.equalsIgnoreCase(thumbnailFileExtension)){
+                        var fileID = record.get("file.id").toLong();
+                        var fileName = record.get("file.name").toString();
+                        var pathID = record.get("path.id").toLong();
+                        var dir = new javaxt.io.Directory(record.get("dir").toString());
+
+                      //Delete thumbnail on disk
+                        var file = new javaxt.io.File(dir, fileName + "." + fileExtension);
+                        file.delete();
+
+                      //Delete thumbnail in the database
+                        conn.execute("delete from file where id=" + fileID);
+
+                      //Update file count
+                        numFiles = 0;
+
+                      //Update pathIDs
+                        pathIDs.put(pathID, Boolean.FALSE);
+                    }
+                }
+
+
+              //If there are no files associated with the media item, delete it
+                if (numFiles==0){
+                    conn.execute("delete from MEDIA_ITEM where ID=" + mediaID);
+                }
+            }
+
+
+          //Delete paths without any files
+            for (Long pathID : pathIDs.keySet()){
+
+              //Get number of files with this path id
+                var numFiles = conn.getRecord(
+                    "select count(*) from FILE " +
+                    "where PATH_ID = " + pathID
+                ).get(0).toLong();
+
+
+              //If there are no files, delete the path
+                if (numFiles==0){
+                    conn.execute("delete from PATH where ID=" + pathID);
+                }
+            }
+
+        }
+
+
+      //Delete empty folders
+        deleteEmptyFolders();
     }
 
+
+  //**************************************************************************
+  //** deleteEmptyFolders
+  //**************************************************************************
+  /** Used to delete empty folders from the database. Note that this method is
+   *  recursive.
+   */
+    private void deleteEmptyFolders() throws Exception {
+        try (Connection conn = database.getConnection()){
+
+          //Find empty folders
+            var folderIDs = new ArrayList<Long>();
+            for (javaxt.sql.Record record : conn.getRecords(
+            "select folder.id, count(folder_entry.id) as num_entries " +
+            "from folder left join folder_entry on folder.id=folder_entry.folder_id " +
+            "where folder.id!=" + rootFolder.getID() + " " +
+            "group by folder.id " +
+            "order by folder.id desc")){
+                long folderID = record.get("id").toLong();
+                long numEntries = record.get("num_entries").toLong();
+                if (numEntries>0){
+                    folderIDs.add(folderID);
+                }
+            }
+
+            if (folderIDs.isEmpty()) return;
+
+            for (long folderID : folderIDs){
+                javaxt.sql.Record record = conn.getRecord(
+                    "select count(folder.id) from folder where parent_id="+folderID
+                );
+
+                if (record.get(0).toLong()==0){
+                    conn.execute("delete from folder where id=" + folderID);
+                }
+            }
+        }
+
+        deleteEmptyFolders();
+    }
+
+
+  //**************************************************************************
+  //** moveMediaItem
+  //**************************************************************************
+  /** Used to move a media item and all associated files to a different folder.
+   */
+    public void moveMediaItem(javaxt.media.models.MediaItem mediaItem,
+        javaxt.media.models.Path output) throws Exception {
+
+        var mediaID = mediaItem.getID();
+        try (Connection conn = database.getConnection()){
+            moveMediaItem(mediaID, output, false, conn);
+        }
+    }
+
+
+    private void moveMediaItem(long mediaID, javaxt.media.models.Path output,
+        boolean renameOnMove, javaxt.sql.Connection conn) throws Exception {
+
+        javaxt.utils.Date date = null;
+        Long thumbnailID = null;
+        Long primaryID = null;
+
+        var fileIDs = new ArrayList<Long>();
+        var uniquePaths = new HashSet<Long>();
+
+        for (javaxt.sql.Record record : conn.getRecords(
+        "select media_item.date, file.extension, file.id, path_id, is_primary " +
+        "from media_item " +
+        "join media_item_file on media_item.id=media_item_file.media_item_id " +
+        "join file on media_item_file.file_id=file.id " +
+        "where media_item.id=" + mediaID)){
+
+            if (date==null) date = record.get("date").toDate();
+
+            var fileID = record.get("id").toLong();
+            fileIDs.add(fileID);
+
+            var pathID = record.get("path_id").toLong();
+            var extension = record.get("extension").toString();
+            if (extension.equalsIgnoreCase(thumbnailFileExtension)){
+                thumbnailID = fileID;
+            }
+            else{
+                uniquePaths.add(pathID);
+            }
+
+            var isPrimary = record.get("is_primary").toBoolean();
+            if (isPrimary) primaryID = fileID;
+
+        }
+
+
+        if (uniquePaths.size()!=1){
+            throw new Exception("Mixed paths for media item " + mediaID);
+        }
+
+
+        if (renameOnMove && date==null){
+            throw new Exception("Missing date for media item " + mediaID);
+        }
+
+
+      //Move media files
+        moveFiles(fileIDs, output, renameOnMove ? date : null, conn);
+
+      //Move thumbnail
+        if (thumbnailID!=null) moveThumbnail(thumbnailID, primaryID, conn);
+
+    }
+
+
+  //**************************************************************************
+  //** mergeDirectories
+  //**************************************************************************
+  /** Used to combine media items from different directories into a single
+   *  directory (e.g. photos from different phones taken on the same date).
+   *  Requires that all media items in both the input and output directories
+   *  have dates. During the merge process, files will be renamed using the
+   *  date/time associated with the media item. Media items without dates are
+   *  not moved.
+   *  @param input List of directories to merge.
+   *  @param output Output directory. The output directory should be different
+   *  from any of the input directories.
+   */
+    public void mergeDirectories(ArrayList<javaxt.media.models.Path> input,
+        javaxt.media.models.Path output) throws Exception {
+        try (Connection conn = database.getConnection()){
+            mergeDirectories(input, output, conn);
+        }
+    }
+
+
+    private void mergeDirectories(ArrayList<javaxt.media.models.Path> input,
+        javaxt.media.models.Path output, Connection conn) throws Exception {
+
+        String pathIDs = input.stream()
+        .map(path -> path.getID().toString()).collect(Collectors.joining(","));
+
+
+        var mediaIDs = new ArrayList<Long>();
+        for (javaxt.sql.Record record : conn.getRecords(
+        "select distinct(media_item_id) from media_item_file " +
+        "join file on media_item_file.file_id=file.id " +
+        "where is_primary=true and file.path_id in (" + pathIDs + ")")){
+            mediaIDs.add(record.get(0).toLong());
+        }
+
+
+        for (Long mediaID : mediaIDs){
+            try{
+                moveMediaItem(mediaID, output, true, conn);
+            }
+            catch(Exception e){
+                console.log(e.getMessage());
+            }
+        }
+
+    }
+
+
+  //**************************************************************************
+  //** moveFiles
+  //**************************************************************************
+  /** Used to move files to a different directory. The files are first copied
+   *  to the output directory, then deleted from the source directory. The
+   *  original files are deleted only after all the files are copied over.
+   *  If any files fail to copy, the original files will remain intact and
+   *  any copied files will be deleted.
+   *  @param fileIDs List of file IDs to move and rename
+   *  @param output Path representing the output directory
+   *  @param date Optional. Date/time associated with the given files. If
+   *  given, files will be renamed with the same file prefix.
+   */
+    private void moveFiles(ArrayList<Long> fileIDs,
+        javaxt.media.models.Path output, javaxt.utils.Date date,
+        Connection conn) throws Exception {
+
+        if (fileIDs==null || output==null) throw new IllegalArgumentException();
+
+
+        var _fileIDs = fileIDs.stream()
+        .map(fileID -> fileID.toString())
+        .collect(Collectors.joining(","));
+
+
+      //Generate list of files to copy
+        var files = new ArrayList<javaxt.io.File>();
+        fileIDs.clear();
+        for (javaxt.sql.Record record : conn.getRecords(
+        "select file.id, file.name, file.extension, dir, path.id " +
+        "from file join path where file.id in(" + _fileIDs + ")")){
+
+            var pathID = record.get("path.id").toLong();
+            if (pathID.equals(output.getID())) continue;
+
+            var fileName = record.get("file.name").toString();
+            var fileExtension = record.get("file.extension").toString();
+            var dir = new javaxt.io.Directory(record.get("dir").toString());
+            var file = new javaxt.io.File(dir, fileName + "." + fileExtension);
+            files.add(file);
+
+            fileIDs.add(record.get("file.id").toLong());
+        }
+
+
+      //Generate list of output files
+        var newFiles = new ArrayList<javaxt.io.File>();
+        if (date==null){
+
+            for (javaxt.io.File file : files){
+                var newFile = new javaxt.io.File(output.getDir() + file.getName());
+                if (newFile.exists()) throw new Exception();
+                newFiles.add(newFile);
+            }
+
+        }
+        else{
+
+          //Set output file name
+            var filePrefix = "IMG_" + date.toLong();
+            var fileSuffix = "";
+            int x = 0;
+            while (true){
+                var foundDup = false;
+
+                for (javaxt.io.File file : files){
+                    var newFile = new javaxt.io.File(output.getDir() +
+                        filePrefix + fileSuffix + "." + file.getExtension()
+                    );
+                    if (newFile.exists()){
+                        foundDup = true;
+                        break;
+                    }
+                }
+
+                if (foundDup){
+                    x++;
+                    fileSuffix = " (" + (x+1) + ")";
+                }
+                else{
+                    break;
+                }
+            }
+            var newFileName = filePrefix + fileSuffix;
+
+
+          //Update array
+            for (javaxt.io.File file : files){
+                var newFile = new javaxt.io.File(output.getDir() +
+                    newFileName + "." + file.getExtension()
+                );
+                if (newFile.exists()) throw new Exception();
+                newFiles.add(newFile);
+            }
+
+        }
+
+
+      //Move files (copy and delete)
+        var copiedFiles = new ArrayList<javaxt.io.File>();
+        try{
+
+          //Copy files
+            for (int i=0; i<files.size(); i++){
+                var file = files.get(i);
+                var newFile = newFiles.get(i);
+                if (newFile.exists()) throw new Exception(); //just in case...
+
+
+              //Clone the file so we don't mess with the original array
+                file = new javaxt.io.File(file.toString());
+
+
+
+              //Copy original file to output
+                file.copyTo(newFile, false);
+
+
+              //Check if copy was successful
+                if (newFile.exists() && newFile.getSHA1().equals(file.getSHA1())){
+                    copiedFiles.add(newFile);
+                }
+                else{
+                    throw new Exception("Failed to copy file " + file);
+                }
+            }
+
+
+          //Delete org files
+            for (javaxt.io.File file : files) file.delete();
+
+        }
+        catch(Exception e){
+            for (javaxt.io.File f : copiedFiles) f.delete();
+            throw e;
+        }
+
+
+
+      //If we're still here, update file records in the database
+        if (date==null){
+            for (int i=0; i<files.size(); i++){
+                var fileID = fileIDs.get(i);
+                var newFile = newFiles.get(i);
+                conn.execute("update file set name='" + newFile.getName(false) +
+                "', path_id=" + output.getID() + " where id=" + fileID);
+            }
+        }
+        else{
+            var newFile = newFiles.get(0);
+            var newFileName = newFile.getName(false);
+            conn.execute("update file set name='" + newFileName + "', " +
+            "path_id=" + output.getID() + " where id in(" + _fileIDs + ")");
+        }
+    }
+
+
+  //**************************************************************************
+  //** moveThumbnail
+  //**************************************************************************
+    private void moveThumbnail(long thumbnailID, long primaryID, Connection conn)
+        throws Exception {
+
+        var thumbnailFile = getFile(thumbnailID, conn);
+        var primaryFile = getFile(primaryID, conn);
+
+        var newFile = new javaxt.io.File(getThumbnailDirectory(primaryFile),
+        primaryFile.getName(false) + "." + thumbnailFile.getExtension());
+
+        thumbnailFile.moveTo(newFile, true);
+        if (!newFile.exists()){
+            throw new Exception("Failed to copy thumbnail " + thumbnailFile);
+        }
+
+      //Update thumbnail record
+        javaxt.media.models.Path path = getOrCreatePath(newFile.getDirectory());
+        conn.execute("update file set name='" + newFile.getName(false) +
+        "', path_id=" + path.getID() + " where id=" + thumbnailID);
+    }
+
+
+  //**************************************************************************
+  //** getFile
+  //**************************************************************************
+  /** Returns a javaxt.io.File associated with a given file ID. Returns null
+   *  if the file is not found in the database.
+   */
+    private javaxt.io.File getFile(long fileID, Connection conn) throws Exception {
+        javaxt.sql.Record record = conn.getRecord(
+        "select file.name, file.extension, dir from file " +
+        "join path on file.path_id=path.id where file.id="+fileID);
+        if (record==null) return null;
+        var fileName = record.get("file.name").toString();
+        var fileExtension = record.get("file.extension").toString();
+        var dir = new javaxt.io.Directory(record.get("dir").toString());
+        return new javaxt.io.File(dir, fileName + "." + fileExtension);
+    }
+
+
+  //**************************************************************************
+  //** getDirectory
+  //**************************************************************************
+  /** Returns a javaxt.io.Directory associated with a given path ID. Returns
+   *  null if the path is not found in the database.
+   */
     private javaxt.io.Directory getDirectory(Long pathID, Connection conn) throws Exception {
         try (PreparedStatement stmt = conn.getConnection().prepareStatement(
         "select dir from path where id=?")){
@@ -563,38 +993,15 @@ public class FileIndex {
             else{
                 if (obj instanceof javaxt.io.File){
                     javaxt.io.File file = (javaxt.io.File) obj;
-                    String dir = file.getDirectory().toString().replace("\\", "/");
-
-                    if (paths.containsKey(dir)) continue;
-                    if (dir.contains("/.") || dir.contains("/_")) continue;
+                    javaxt.io.Directory d = file.getDirectory();
+                    String dir = getDir(d);
+                    if (dir==null || paths.containsKey(dir)) continue;
 
 
                   //Create path as needed
                     try{
-
-                        Long pathID = null;
-                        stmt.setLong(1, host.getID());
-                        stmt.setString(2, dir);
-                        java.sql.ResultSet r2 = stmt.executeQuery();
-                        try (Recordset rs = new Recordset()){
-                            rs.open(r2);
-                            if (rs.hasNext()) pathID = rs.getValue(0).toLong();
-                        }
-
-                        javaxt.media.models.Path path;
-                        if (pathID==null){
-                            path = new javaxt.media.models.Path();
-                            path.setHost(host);
-                            path.setDir(dir);
-                            path.save();
-                        }
-                        else{
-                            path = new javaxt.media.models.Path(pathID);
-                        }
-
-
+                        javaxt.media.models.Path path = getOrCreatePath(d, stmt);
                         paths.put(dir, path.getID());
-
                     }
                     catch(Exception e){
                         e.printStackTrace();
@@ -605,6 +1012,79 @@ public class FileIndex {
         }
     }
 
+
+  //**************************************************************************
+  //** getOrCreatePath
+  //**************************************************************************
+  /** Returns a Path for a given Directory. Creates a new record in the
+   *  database as needed.
+   */
+    public javaxt.media.models.Path getOrCreatePath(javaxt.io.Directory d)
+        throws Exception {
+        try(Connection conn = database.getConnection()){
+            return getOrCreatePath(d, conn);
+        }
+    }
+
+
+  //**************************************************************************
+  //** getOrCreatePath
+  //**************************************************************************
+    private javaxt.media.models.Path getOrCreatePath(javaxt.io.Directory d,
+        Connection conn) throws Exception {
+        try (PreparedStatement stmt = conn.getConnection().prepareStatement(
+        "select id from path where host_id=? and dir=?")){
+            return getOrCreatePath(d, stmt);
+        }
+    }
+
+
+  //**************************************************************************
+  //** getOrCreatePath
+  //**************************************************************************
+    private javaxt.media.models.Path getOrCreatePath(javaxt.io.Directory d,
+        PreparedStatement stmt) throws Exception {
+
+        String dir = getDir(d);
+        if (dir==null) throw new Exception("Hidden dir");
+
+
+        Long pathID = null;
+        stmt.setLong(1, host.getID());
+        stmt.setString(2, dir);
+        java.sql.ResultSet r2 = stmt.executeQuery();
+        try (Recordset rs = new Recordset()){
+            rs.open(r2);
+            if (rs.hasNext()) pathID = rs.getValue(0).toLong();
+        }
+
+        javaxt.media.models.Path path;
+        if (pathID==null){
+            path = new javaxt.media.models.Path();
+            path.setHost(host);
+            path.setDir(dir);
+            path.save();
+        }
+        else{
+            path = new javaxt.media.models.Path(pathID);
+        }
+
+        return path;
+    }
+
+
+  //**************************************************************************
+  //** getDir
+  //**************************************************************************
+  /** Returns a string representing a directory. Returns null if the given
+   *  directory is hidden.
+   */
+    private String getDir(javaxt.io.Directory d){
+        if (d==null) return null;
+        String dir = d.toString().replace("\\", "/");
+        if (d.isHidden() || dir.contains("/.") || dir.contains("/_")) return null;
+        return dir;
+    }
 
 
   //**************************************************************************
@@ -847,7 +1327,7 @@ public class FileIndex {
 
                     rs.addNew();
                     rs.setValue("name", primaryFile.getName(false));
-                    rs.setValue("date", cint(primaryFile.getDate()));
+                    //rs.setValue("date", cint(primaryFile.getDate()));
 
                     if (pHash!=null){
                         rs.setValue("hash", Long.toBinaryString(pHash));
