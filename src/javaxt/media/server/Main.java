@@ -18,6 +18,7 @@ import javaxt.express.*;
 import javaxt.express.utils.*;
 import javaxt.express.utils.StatusLogger;
 import static javaxt.express.utils.StringUtils.*;
+import static javaxt.express.ConfigFile.updateDir;
 import javaxt.express.notification.NotificationService;
 
 
@@ -95,8 +96,9 @@ public class Main {
                 startServer(args, jar);
             }
             catch(Exception e){
-                System.out.println(e.getMessage());
-                e.printStackTrace();
+                var msg = e.getMessage();
+                if (msg==null) e.printStackTrace();
+                else System.out.println(msg);
             }
         }
 
@@ -121,8 +123,13 @@ public class Main {
 
       //Set path to the web directory
         javaxt.io.Directory web;
+        String webDir = getValue(args, "--web", "-w").toString();
+        if (webDir!=null){
+            webConfig.set("webDir", webDir);
+            updateDir("webDir", webConfig, new javaxt.io.File(jar.getFile()), false);
+        }
         if (webConfig.has("webDir")){
-            String webDir = webConfig.get("webDir").toString();
+            webDir = webConfig.get("webDir").toString();
             web = new javaxt.io.Directory(webDir);
             if (!web.exists() || webDir.length()==0){
                 throw new IllegalArgumentException("Invalid \"webDir\" defined in config file");
@@ -138,37 +145,37 @@ public class Main {
 
 
       //Get path to the temp directory
-        javaxt.io.Directory temp;
-        String path = Config.get("temp").toString();
-        if (path!=null){
-            temp = new javaxt.io.Directory(path);
+        javaxt.io.Directory temp = null;
+        String tempDir = Config.get("temp").toString();
+        if (tempDir!=null){
+            temp = new javaxt.io.Directory(tempDir);
             if (!temp.exists()) temp.create();
             if (!temp.exists()) throw new IllegalArgumentException(
                 "Invalid \"temp\" directory defined in config file");
         }
         else{
-            temp = new javaxt.io.Directory(web.getParentDirectory() + "temp");
+            javaxt.io.Directory jarDir = new javaxt.io.Directory(jar.getFile().getParent());
+            String dirName = jarDir.getName();
+            if (dirName.equals("target") || dirName.equals("dist")) jarDir = jarDir.getParentDirectory();
+            temp = new javaxt.io.Directory(jarDir + "temp");
             if (!temp.exists()) temp.create();
             if (!temp.exists()) throw new IllegalArgumentException("Failed to find temp directory");
         }
+        Config.set("temp", temp.toString());
 
 
-
-      //Set port to run on (optional)
-        Integer port = webConfig.get("port").toInteger();
-        if (args.containsKey("-port")){
-            try{
-                port = Integer.parseInt(args.get("-port"));
-            }
-            catch(Exception e){}
-        }
+      //Set port to run on
+        Integer port = getValue(args, "--port", "-p").toInteger();
+        if (port==null) port = webConfig.get("port").toInteger();
+        if (port==null || port<0) port = 8080;
+        webConfig.set("port", port);
 
 
-      //Set number of threads (optional)
-        Integer maxThreads = webConfig.get("maxThreads").toInteger();
-        if (maxThreads==null) maxThreads = getValue(args, "--threads", "-t").toInteger();
+      //Set number of threads
+        Integer maxThreads = getValue(args, "--threads", "-t").toInteger();
+        if (maxThreads==null) maxThreads = webConfig.get("maxThreads").toInteger();
         if (maxThreads==null || maxThreads<0) maxThreads = 250;
-
+        webConfig.set("maxThreads", maxThreads);
 
 
       //Get keystore (optional)
@@ -185,8 +192,6 @@ public class Main {
                 keypass = null;
             }
         }
-
-
 
 
 
@@ -227,7 +232,7 @@ public class Main {
       //Start web server
         ArrayList<InetSocketAddress> addresses = new ArrayList<>();
         if (keystore==null){
-            addresses.add(new InetSocketAddress("0.0.0.0", port==null ? 8080 : port));
+            addresses.add(new InetSocketAddress("0.0.0.0", port));
         }
         else{
             addresses.add(new InetSocketAddress("0.0.0.0", 80));

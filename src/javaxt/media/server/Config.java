@@ -7,9 +7,8 @@ import javaxt.json.*;
 import javaxt.sql.Model;
 import javaxt.sql.Database;
 import javaxt.express.utils.DbUtils;
+import static javaxt.express.ConfigFile.*;
 import static javaxt.utils.Console.console;
-import static javaxt.express.ConfigFile.updateDir;
-import static javaxt.express.ConfigFile.updateFile;
 
 //******************************************************************************
 //**  Config Class
@@ -101,10 +100,13 @@ public class Config {
         JSONObject models = new JSONObject();
         modelConfig.set("opencv", "models/opencv");
         updateDir("opencv", modelConfig, configFile, false);
-        for (javaxt.io.File file : new javaxt.io.Directory(modelConfig.get("opencv").toString()).getFiles("*.onnx")){
-            models.set(file.getName(false), file.toString());
+        String opencv = modelConfig.get("opencv").toString();
+        if (opencv!=null){
+            for (javaxt.io.File file : new javaxt.io.Directory(opencv).getFiles("*.onnx")){
+                models.set(file.getName(false), file.toString());
+            }
+            config.set("models", models);
         }
-        config.set("models", models);
 
 
       //Run validations
