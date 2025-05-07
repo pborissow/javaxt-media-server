@@ -12,8 +12,8 @@ import javaxt.sql.*;
 import javaxt.json.*;
 import javaxt.utils.ThreadPool;
 import javaxt.media.utils.OpenCV.Face;
+import javaxt.media.utils.ImageUtils.Image;
 import static javaxt.utils.Console.console;
-import static javaxt.media.utils.ImageUtils.*;
 import javaxt.express.notification.NotificationService;
 
 import org.opencv.objdetect.FaceDetectorYN;
@@ -40,27 +40,27 @@ public class FileIndex {
     private String thumbnailFileExtension = "rrd"; //"xtn"
 
 
-
     private javaxt.media.models.Folder rootFolder;
     private javaxt.media.models.Host host;
-    private ImageMagick magick;
-    private FFmpeg ffmpeg;
+    private ImageUtils imageUtils;
     private Database database;
-    private javaxt.io.File faceDetecionModel;
 
 
   //**************************************************************************
   //** Constructor
   //**************************************************************************
-  /** Used to instantiate this class
-   */
-    public FileIndex(ImageMagick magick, FFmpeg ffmpeg,
-        javaxt.io.File faceDetecionModel, Database database) throws Exception {
+    public FileIndex(Database database) throws Exception {
+        this(database, null);
+    }
 
-        this.magick = magick;
-        this.ffmpeg = ffmpeg;
+
+  //**************************************************************************
+  //** Constructor
+  //**************************************************************************
+    public FileIndex(Database database, ImageUtils imageUtils) throws Exception {
+
+        this.imageUtils = imageUtils;
         this.database = database;
-        this.faceDetecionModel = faceDetecionModel;
 
 
 
@@ -127,9 +127,15 @@ public class FileIndex {
                   //Get or create an instance of the FaceDetectorYN class. The
                   //class is not thread-safe so each thread will have it's own
                   //dedicated instance.
-                    FaceDetectorYN faceDetector = (FaceDetectorYN) get("faceDetector", ()->{
-                        return OpenCV.getFaceDetector(faceDetecionModel);
-                    });
+                    FaceDetectorYN faceDetector;
+                    try{
+                        faceDetector = (FaceDetectorYN) get("faceDetector", ()->{
+                            return OpenCV.getFaceDetector(imageUtils.getFaceDetecionModel());
+                        });
+                    }
+                    catch(Exception e){
+                        faceDetector = null;
+                    }
 
 
 
@@ -294,14 +300,20 @@ public class FileIndex {
 
           //Update shared hashmaps on exit
             public void exit(){
-                synchronized(mediaIDs){
-                    for (long mediaID : (HashSet<Long>) get("mediaIDs")){
-                        mediaIDs.put(mediaID, Boolean.FALSE);
+                var _mediaIDs = (HashSet<Long>) get("mediaIDs");
+                if (_mediaIDs!=null && !_mediaIDs.isEmpty()){
+                    synchronized(mediaIDs){
+                        for (long mediaID : _mediaIDs){
+                            mediaIDs.put(mediaID, Boolean.FALSE);
+                        }
                     }
                 }
-                synchronized(pathIDs){
-                    for (long pathID : (HashSet<Long>) get("pathIDs")){
-                        pathIDs.put(pathID, Boolean.FALSE);
+                var _pathIDs = (HashSet<Long>) get("pathIDs");
+                if (_pathIDs!=null && !_pathIDs.isEmpty()){
+                    synchronized(pathIDs){
+                        for (long pathID : _pathIDs){
+                            pathIDs.put(pathID, Boolean.FALSE);
+                        }
                     }
                 }
             }
@@ -1176,130 +1188,56 @@ public class FileIndex {
             if (mediaIDs.isEmpty()){ //if no records, create a new MediaItem
 
 
+              //Get image from file
+                Image image = null;
+                if (imageUtils.isMovie(primaryFile)){
+
+                  //Create image from a frame in the movie/video
+                    if (primaryFile.getExtension().equalsIgnoreCase("MP4")){
+                        image = imageUtils.getImage(primaryFile);
+                    }
+                    else{ //create an MP4 for streaming
+
+                        javaxt.io.File mp4 = new javaxt.io.File(
+                            primaryFile.getDirectory(),
+                            primaryFile.getName(false) + ".mp4"
+                        );
+
+                        if (!mp4.exists()) imageUtils.createMP4(primaryFile, mp4);
+
+                        if (mp4.exists()){
+
+                          //Update list of file IDs
+                            javaxt.media.models.File f = getOrCreateFile(mp4, conn);
+                            filesWithIDs.put(f.getID(), mp4);
+
+                          //Get image
+                            image = imageUtils.getImage(mp4);
+
+                        }
+
+                        if (image==null) image = imageUtils.getImage(primaryFile);
+                    }
+                }
+                else{
+
+                    image = imageUtils.getImage(primaryFile);
+                }
+
+
+
               //Get metadata and create thumbnail
                 JSONObject metadata;
                 Long pHash;
-                javaxt.io.File tn = null;
-
-
-                Object[] img = getOrCreateImage(primaryFile);
-                javaxt.io.Image image = (javaxt.io.Image) img[0];
-                javaxt.io.File file = (javaxt.io.File) img[1];
-
-
-                if (!primaryFile.equals(file)){ //unsupported image format (e.g. HEIF, video, etc)
-                    var jpeg = file;
-
-                  //Extract metadata
-                    if (ffmpeg.isMovie(primaryFile)){
-                        metadata = ffmpeg.getMetadata(primaryFile);
-                    }
-                    else{
-                        metadata = getMetadata(primaryFile, magick);
-                    }
-
-
-                  //If metadata is empty, check whether there's a sidecar JPEG
-                  //file (e.g. older ipads)
-                    if (metadata.isEmpty()){
-                        javaxt.io.File f = new javaxt.io.File(
-                            primaryFile.getDirectory(),
-                            primaryFile.getName(false) + ".JPG"
-                        );
-                        if (f.exists()) metadata = getMetadata(f, magick);
-                    }
-
-
-
-                  //If the primaryFile is a movie, create an MP4 for streaming
-                    if (ffmpeg.isMovie(primaryFile)){
-                        if (!primaryFile.getExtension().equalsIgnoreCase("MP4")){
-                            javaxt.io.File mp4 = new javaxt.io.File(
-                                jpeg.getDirectory(), primaryFile.getName(false) + ".mp4"
-                            );
-                            ffmpeg.createMP4(primaryFile, mp4);
-                            if (mp4.exists()){
-
-                              //Update list of file IDs
-                                javaxt.media.models.File f = getOrCreateFile(mp4, conn);
-                                filesWithIDs.put(f.getID(), mp4);
-
-                              //If a jpeg of the movie doesn't exist,
-                              //try creating one again using the mp4
-                                if (!jpeg.exists()){
-                                    ffmpeg.createJPEG(mp4, jpeg);
-                                    image = jpeg.getImage();
-                                }
-                            }
-                        }
-                    }
-
-
-                  //Create thumbail of the JPEG
-                    if (jpeg.exists()){
-
-
-
-                        if (image.getBufferedImage()==null){
-                            console.log("Failed to open JPEG. " + jpeg);
-                            image = null;
-                            pHash = null;
-                        }
-                        else{
-
-                          //Rotate the image
-                            /** Nevermind! ImageMagick seems to be auto-rotating the JPEGs */
-                            //Integer orientation = metadata.get("orientation").toInteger();
-                            //if (orientation!=null) rotate(image, orientation);
-
-
-                          //Get pHash
-                            pHash = image.getPHash();
-
-
-                          //Create thumbnail
-                            try{
-                                tn = getThumbnailFile(primaryFile);
-                                createThumbnail(image, tn);
-                            }
-                            catch(Exception e){ //let's not make this a deal breaker...
-                                e.printStackTrace();
-                                tn = null;
-                            }
-
-
-                          //Save the JPEG file in the database
-                            javaxt.media.models.File f = getOrCreateFile(jpeg,
-                            new javaxt.media.models.Path(pathID));
-
-
-
-                          //Update files HashMap
-                            filesWithIDs.put(f.getID(), jpeg);
-
-                        }
-                    }
-                    else{
-                        console.log("Failed to create JPEG for " + primaryFile);
-                        pHash = null;
-                    }
-
+                javaxt.io.File tn;
+                if (image==null){
+                    metadata = new JSONObject();
+                    pHash = null;
+                    tn = null;
                 }
-                else{ //supported image
-
-                  //Get metadata
-                    metadata = getMetadata(image);
-
-
-                  //Rotate the image
-                    Integer orientation = metadata.get("orientation").toInteger();
-                    if (orientation!=null) rotate(image, orientation);
-
-
-
-                  //Get pHash
+                else{
+                    metadata = image.getMetadata();
                     pHash = image.getPHash();
-
                     try{
                         tn = getThumbnailFile(primaryFile);
                         createThumbnail(image, tn);
@@ -1309,7 +1247,6 @@ public class FileIndex {
                         tn = null;
                     }
                 }
-
 
 
               //Add thumbnail to the database
@@ -1459,8 +1396,7 @@ public class FileIndex {
                     javaxt.io.File tn = getThumbnailFile(primaryFile);
                     if (!tn.exists()){
                         try{
-                            Object[] img = getOrCreateImage(primaryFile);
-                            var image = (javaxt.io.Image) img[0];
+                            var image = imageUtils.getImage(primaryFile);
                             createThumbnail(image, tn);
                         }
                         catch(Exception e){ //let's not make this a deal breaker...
@@ -1579,8 +1515,8 @@ public class FileIndex {
 
 
               //Special case for short clips (e.g. MOV sidecar file for iPhones)
-                if (ffmpeg.isMovie(file)){
-                    Double duration = ffmpeg.getDuration(file);
+                if (imageUtils.isMovie(file)){
+                    Double duration = imageUtils.getDuration(file);
                     if (duration!=null && duration<4.0) continue;
                 }
 
@@ -1869,7 +1805,7 @@ public class FileIndex {
             f.setHash(file.getMD5());
             f.setType(file.getContentType());
             try{
-            f.setDate(new javaxt.utils.Date(file.getDate()));
+                f.setDate(new javaxt.utils.Date(file.getDate()));
             }
             catch(Exception e){
                 console.log(file.getDate(), file);
@@ -1913,35 +1849,7 @@ public class FileIndex {
 
 
 
-    private Object[] getOrCreateImage(javaxt.io.File primaryFile){
 
-        javaxt.io.Image image = primaryFile.getImage();
-        if (image.getBufferedImage()==null){ //unsupported image format (e.g. HEIF, video, etc)
-
-
-          //Set path to JPEG for the primaryFile
-            javaxt.io.File jpeg = new javaxt.io.File(
-                getThumbnailDirectory(primaryFile),
-                primaryFile.getName(false) + ".jpg"
-            );
-
-
-          //Create JPEG
-            if (ffmpeg.isMovie(primaryFile)){
-                ffmpeg.createJPEG(primaryFile, jpeg);
-            }
-            else{
-                magick.convert(primaryFile, jpeg);
-            }
-
-
-            return new Object[]{jpeg.getImage(), jpeg};
-
-        }
-        else{
-            return new Object[]{image, primaryFile};
-        }
-    }
 
 
 

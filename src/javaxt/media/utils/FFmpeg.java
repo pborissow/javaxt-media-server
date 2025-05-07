@@ -8,7 +8,7 @@ public class FFmpeg {
 
     private String ffmpeg;
     private String ffprobe;
-    private String[] fileFilters = new String[]{
+    private String[] fileExtensions = new String[]{
         "mov", "mts", "m4v", "mp4", "webm", "ogg"
     };
 
@@ -271,7 +271,7 @@ public class FFmpeg {
         if (file==null || !file.exists()) return false;
 
         String fileExt = file.getExtension().toLowerCase();
-        for (String ext : fileFilters){
+        for (String ext : fileExtensions){
             if (fileExt.equals(ext)) return true;
         }
         return false;
@@ -284,7 +284,7 @@ public class FFmpeg {
   /** Returns a list of known file extensions
    */
     public String[] getSupportedFileExtensions(){
-        return fileFilters;
+        return fileExtensions;
     }
 
 

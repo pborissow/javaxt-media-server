@@ -290,7 +290,7 @@ public class Main {
 
             Config.initModels();
 
-            FileIndex fileIndex = new FileIndex(null, null, null, Config.getDatabase());
+            FileIndex fileIndex = new FileIndex(Config.getDatabase());
             fileIndex.deleteOrphans(numThreads);
         }
         else{
@@ -316,25 +316,24 @@ public class Main {
         if (numThreads==null || numThreads<0) numThreads = 4;
 
 
-      //Instantiate command line apps
-        ImageMagick magick = new ImageMagick(Config.get("apps").get("ImageMagick").toString());
-        FFmpeg ffmpeg = new FFmpeg(Config.get("apps").get("FFmpeg").toString());
-
-
       //Get face detection model
         javaxt.io.File faceDetecionModel = Config.getOnnxFile("face_detection_yunet_2023mar");
 
 
-      //Generate list of supported file types
-        ArrayList<String> fileFilters = new ArrayList<>();
-        Collections.addAll(fileFilters, new String[]{
-            "*.jpg", "*.jpeg", "*.jpe", //jpeg varients
-            "*.png", "*.heic", "*.webp" //other image formats
-        });
-        for (String ext : ffmpeg.getSupportedFileExtensions()){
-            fileFilters.add("*."+ext);
+      //Instantiate ImageUtils
+        ImageUtils imageUtils = new ImageUtils();
+        imageUtils.addImageMagick(getImageMagick());
+        imageUtils.addFFmpeg(getFFmpeg());
+        imageUtils.addFaceDetecionModel(faceDetecionModel);
+
+
+
+      //Generate file filter
+        var fileFilters = new ArrayList<>();
+        for (String ext : imageUtils.getSupportedFileExtensions()){
+            fileFilters.add("*." + ext);
         }
-        String[] filter = fileFilters.toArray(new String[fileFilters.size()]);
+        var filter = fileFilters.toArray(new String[fileFilters.size()]);
 
 
 
@@ -392,7 +391,7 @@ public class Main {
 
 
       //Instantiate FileIndex and add files
-        FileIndex fileIndex = new FileIndex(magick, ffmpeg, faceDetecionModel, Config.getDatabase());
+        FileIndex fileIndex = new FileIndex(Config.getDatabase(), imageUtils);
         fileIndex.addDirectory(dir, filter, numThreads, taskID);
     }
 
@@ -554,12 +553,12 @@ public class Main {
 
           //Get ImageMagick
             ImageMagick magick = new ImageMagick(Config.get("apps").get("ImageMagick").toString());
+            ImageUtils imageUtils = new ImageUtils(magick);
 
 
           //Get image from file
             javaxt.io.File file = new javaxt.io.File(args.get("-file"));
-            javaxt.io.Image img = getImage(file, magick);
-
+            javaxt.io.Image img = imageUtils.getImage(file);
 
 
           //Detect faces
@@ -586,11 +585,12 @@ public class Main {
             ImageMagick magick = new ImageMagick(Config.get("apps").get("ImageMagick").toString());
             Object faceDetecionModel = OpenCV.getFaceDetector(Config.getOnnxFile("face_detection_yunet_2023mar"));
             Object faceRecognitionModel = OpenCV.getFaceRecognizer(Config.getOnnxFile("face_recognition_sface_2021dec"));
+            ImageUtils imageUtils = new ImageUtils(magick);
 
 
           //Get faces from file
             javaxt.io.File file = new javaxt.io.File(args.get("-file"));
-            javaxt.io.Image img = getImage(file, magick);
+            javaxt.io.Image img = imageUtils.getImage(file);
             org.opencv.core.Mat mat = OpenCV.getMat(img);
             var faces = OpenCV.detectFaces(mat, faceDetecionModel);
             console.log("found " + faces.size() + " faces in " + file.getName());
@@ -598,7 +598,7 @@ public class Main {
 
           //Get faces from file2
             javaxt.io.File file2 = new javaxt.io.File(args.get("-file2"));
-            javaxt.io.Image img2 = getImage(file2, magick);
+            javaxt.io.Image img2 = imageUtils.getImage(file2);
             org.opencv.core.Mat mat2 = OpenCV.getMat(img2);
             var faces2 = OpenCV.detectFaces(mat2, faceDetecionModel);
             console.log("found " + faces2.size() + " faces in " + file2.getName());
@@ -687,33 +687,12 @@ public class Main {
 
 
   //**************************************************************************
-  //** getImage
-  //**************************************************************************
-    private static javaxt.io.Image getImage(javaxt.io.File file, ImageMagick magick){
-        javaxt.io.Image image = file.getImage();
-        if (image.getBufferedImage()==null){ //unsupported image format (e.g. HEIF)
-            javaxt.io.File f = magick.createJPEG(file);
-            JSONObject metadata = ImageUtils.getMetadata(f, magick);
-            image = f.getImage();
-            Integer orientation = metadata.get("orientation").toInteger();
-            console.log(orientation);
-            if (orientation!=null) ImageUtils.rotate(image, orientation);
-            return image;
-        }
-        else{
-            //console.log(image.getExifTags().get(0x0112)); //orientation
-            image.rotate();
-            return image;
-        }
-    }
-
-
-  //**************************************************************************
   //** getDirectory
   //**************************************************************************
     private static javaxt.io.Directory getDirectory(HashMap<String, String> args) throws Exception {
 
         String path = args.get("-path");
+        if (path==null) path = "";
 
       //Clean up the path if windows
         boolean isWindows = System.getProperty("os.name").toLowerCase().startsWith("windows");
@@ -726,14 +705,25 @@ public class Main {
 
       //Get directory from path
         try{
+            if (path.isBlank()) throw new Exception();
             javaxt.io.Directory dir = new javaxt.io.Directory(path);
             if (!dir.exists()) throw new Exception();
             return dir;
 
         }
         catch(Exception e){
-            System.out.println("Invalid or missing directory specified in \"-index\". " + path);
+            System.out.println("Invalid or missing directory specified in \"-path\". " + path);
             return null;
         }
+    }
+
+    private static ImageMagick getImageMagick(){
+        try {return new ImageMagick(Config.get("apps").get("ImageMagick").toString());}
+        catch(Exception e){return null;}
+    }
+
+    private static FFmpeg getFFmpeg(){
+        try {return new FFmpeg(Config.get("apps").get("FFmpeg").toString());}
+        catch(Exception e){return null;}
     }
 }

@@ -3,8 +3,243 @@ package javaxt.media.utils;
 import java.util.*;
 import javaxt.json.JSONObject;
 
+//******************************************************************************
+//**  ImageUtils
+//******************************************************************************
+/**
+ *   Used to extract metadata and generate images from visual media (photos
+ *   and videos). Leverages FFmpeg and ImageMagick when available.
+ *
+ ******************************************************************************/
 
 public class ImageUtils {
+
+    private ImageMagick magick;
+    private FFmpeg ffmpeg;
+    private javaxt.io.File faceDetecionModel;
+    private ImageUtils me = this;
+    private String[] fileExtensions = new String[]{
+        "jpg", "jpeg", "jpe", "jfif", //jpeg varients
+        "png", "webp" //other image formats
+    };
+
+
+  //**************************************************************************
+  //** Image Class
+  //**************************************************************************
+    public class Image extends javaxt.io.Image {
+        private javaxt.io.File source;
+        private boolean derived;
+        private JSONObject metadata;
+        private Image(javaxt.io.Image image, javaxt.io.File source, boolean derived){
+            super(image.getBufferedImage());
+            this.source = source;
+            this.derived = derived;
+        }
+        public javaxt.io.File getSource(){
+            return source;
+        }
+        public JSONObject getMetadata(){
+            if (metadata==null){
+                if (derived) metadata = me.getMetadata(source);
+                else metadata = me.getMetadata((javaxt.io.Image) this);
+            }
+            return metadata;
+        }
+    }
+
+
+  //**************************************************************************
+  //** Constructor
+  //**************************************************************************
+    public ImageUtils(Object... args){
+        for (Object arg : args){
+            if (arg instanceof ImageMagick) addImageMagick((ImageMagick) arg);
+            if (arg instanceof FFmpeg) addFFmpeg((FFmpeg) arg);
+        }
+    }
+
+
+  //**************************************************************************
+  //** addImageMagick
+  //**************************************************************************
+    public void addImageMagick(ImageMagick magick){
+        this.magick = magick;
+
+        if (magick!=null){
+            var newFilter = new LinkedHashSet<>();
+            Collections.addAll(newFilter, fileExtensions);
+            newFilter.add("heic");
+            fileExtensions = newFilter.toArray(new String[newFilter.size()]);
+        }
+    }
+
+
+  //**************************************************************************
+  //** addFFmpeg
+  //**************************************************************************
+    public void addFFmpeg(FFmpeg ffmpeg){
+        this.ffmpeg = ffmpeg;
+
+        if (ffmpeg!=null){
+            var newFilter = new LinkedHashSet<>();
+            Collections.addAll(newFilter, fileExtensions);
+            Collections.addAll(newFilter, ffmpeg.getSupportedFileExtensions());
+            fileExtensions = newFilter.toArray(new String[newFilter.size()]);
+        }
+    }
+
+
+  //**************************************************************************
+  //** addFaceDetecionModel
+  //**************************************************************************
+    public void addFaceDetecionModel(javaxt.io.File faceDetecionModel){
+        this.faceDetecionModel = faceDetecionModel;
+    }
+
+
+  //**************************************************************************
+  //** getFaceDetecionModel
+  //**************************************************************************
+    public javaxt.io.File getFaceDetecionModel(){
+        return faceDetecionModel;
+    }
+
+
+  //**************************************************************************
+  //** getSupportedFileExtensions
+  //**************************************************************************
+  /** Returns a list of known file extensions
+   */
+    public String[] getSupportedFileExtensions(){
+        return fileExtensions;
+    }
+
+
+  //**************************************************************************
+  //** isMovie
+  //**************************************************************************
+  /** Returns true if the file is a supported video/movie.
+   */
+    public boolean isMovie(javaxt.io.File file){
+        if (ffmpeg!=null) return ffmpeg.isMovie(file);
+        return false;
+    }
+
+
+  //**************************************************************************
+  //** getDuration
+  //**************************************************************************
+  /** Returns the length of a movie, in seconds. Returns null if the file is
+   *  invalid or if the length cannot be determined.
+   */
+    public Double getDuration(javaxt.io.File file){
+        if (isMovie(file)) return ffmpeg.getDuration(file);
+        return null;
+    }
+
+
+  //**************************************************************************
+  //** createMP4
+  //**************************************************************************
+    public void createMP4(javaxt.io.File input, javaxt.io.File output){
+        if (ffmpeg!=null) ffmpeg.createMP4(input, output);
+    }
+
+
+  //**************************************************************************
+  //** getOrCreateImage
+  //**************************************************************************
+  /** Returns an image for a given file. Returns null if the file is invalid
+   *  or if an image cannot be extracted.
+   *  @param primaryFile Media file (image or video)
+   */
+    public Image getImage(javaxt.io.File primaryFile){
+        if (primaryFile==null || !primaryFile.exists()) return null;
+
+        javaxt.io.Image image = primaryFile.getImage();
+        if (image.getBufferedImage()==null){ //unsupported image format (e.g. HEIF, video, etc)
+
+
+          //Set path to JPEG for the primaryFile
+            javaxt.io.File jpeg = new javaxt.io.File(
+                primaryFile.getDirectory(),
+                primaryFile.getName(false) + ".jpg"
+            );
+
+
+          //Create javaxt.io.Image from JPEG
+            if (jpeg.exists()){
+                image = jpeg.getImage();
+            }
+            else{
+
+              //Create temp JPEG
+                if (isMovie(primaryFile)){
+                    ffmpeg.createJPEG(primaryFile, jpeg);
+                }
+                else{
+                    if (magick!=null) magick.convert(primaryFile, jpeg);
+                }
+
+                image = jpeg.getImage();
+                jpeg.delete();
+            }
+
+
+            if (image==null || image.getBufferedImage()==null) return null;
+            else return new Image(image, jpeg, true);
+        }
+        else{
+
+            /*
+            Image img = new Image(image, primaryFile, false);
+            Integer orientation = img.getMetadata().get("orientation").toInteger();
+            if (orientation!=null) rotate(image, orientation);
+            return img;
+            */
+
+            image.rotate();
+            return new Image(image, primaryFile, false);
+        }
+    }
+
+
+  //**************************************************************************
+  //** getMetadata
+  //**************************************************************************
+  /** Used to extract metadata from a file using ImageMagick or FFmpeg
+   */
+    private JSONObject getMetadata(javaxt.io.File file){
+        JSONObject metadata = null;
+
+        if (isMovie(file)){
+            metadata = ffmpeg.getMetadata(file);
+        }
+        else{
+
+            if (magick!=null){
+                metadata = getMetadata(file, magick);
+
+
+              //If metadata is empty, check whether there's a sidecar JPEG
+              //file (e.g. older ipads)
+                if (metadata.isEmpty()){
+                    javaxt.io.File f = new javaxt.io.File(
+                        file.getDirectory(),
+                        file.getName(false) + ".JPG"
+                    );
+                    if (f.exists()) metadata = getMetadata(f, magick);
+                }
+
+            }
+
+        }
+
+        if (metadata==null) metadata = new JSONObject();
+
+        return metadata;
+    }
 
 
   //**************************************************************************
@@ -212,7 +447,6 @@ public class ImageUtils {
   //**************************************************************************
   /** Used to rotate an image based on the EXIF Orientation tag. Code copied
    *  from javaxt.io.Image class.
-   */
     public static void rotate(javaxt.io.Image img, Integer orientation){
         try {
 
@@ -231,4 +465,5 @@ public class ImageUtils {
             //Failed to parse exif orientation.
         }
     }
+    */
 }
