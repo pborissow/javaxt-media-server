@@ -1275,8 +1275,16 @@ public class FileIndex {
 
                       //Extract date from metadata
                         try{
-                            Integer date = cint(metadata.get("date").toDate());
-                            if (date!=null) rs.setValue("date", date);
+                            var date = metadata.get("date").toDate();
+                            if (date!=null){
+                                rs.setValue("start_date", date);
+                                var endDate = date.clone();
+                                var duration = metadata.get("duration").toDouble();
+                                if (duration!=null && duration>0){
+                                    endDate.add((int) Math.ceil(duration), "seconds");
+                                }
+                                rs.setValue("end_date", endDate);
+                            }
                         }
                         catch(Exception e){}
 
@@ -1847,27 +1855,4 @@ public class FileIndex {
         return folder;
     }
 
-
-
-
-
-
-
-    private Integer cint(java.util.Date date){
-        try{
-            return cint(new javaxt.utils.Date(date));
-        }
-        catch(Exception e){
-            return null;
-        }
-    }
-
-    private Integer cint(javaxt.utils.Date date){
-        try{
-            return Integer.parseInt(date.toString("yyyyMMdd"));
-        }
-        catch(Exception e){
-            return null;
-        }
-    }
 }
