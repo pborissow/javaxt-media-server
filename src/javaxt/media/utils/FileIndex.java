@@ -1241,6 +1241,7 @@ public class FileIndex {
                     try{
                         tn = getThumbnailFile(primaryFile);
                         createThumbnail(image, tn);
+                        if (!tn.exists()) tn = null;
                     }
                     catch(Exception e){ //let's not make this a deal breaker...
                         e.printStackTrace();
@@ -1595,6 +1596,7 @@ public class FileIndex {
 
       //Create rrd
         RRDImage rrd = new RRDImage(temp.toFile());
+        int numImages = 0;
         try{
 
             for (String id : imageSizes){
@@ -1632,6 +1634,7 @@ public class FileIndex {
 
                   //Add image to the thumbail
                     rrd.addImage(id,img);
+                    numImages++;
                 }
 
             }
@@ -1640,9 +1643,30 @@ public class FileIndex {
             rrd.close();
 
 
-          //Rename the temp file
-            temp.rename(thumbnailFile.getName());
+            if (numImages>0){
 
+              //Validate file
+                if (!temp.exists()){
+                    throw new Exception("Failed to create thumbnail: " + thumbnailFile);
+                }
+
+
+              //Rename the temp file
+                temp.rename(thumbnailFile.getName());
+
+
+              //Validate rename
+                if (!thumbnailFile.exists()){
+                    throw new Exception("Failed to rename thumbnail: " + thumbnailFile);
+                }
+            }
+            else{
+
+              //If no files were added, then the temp file shouldn't exist.
+              //But let's check if it does and delete it as needed.
+                if (temp.exists()) temp.delete();
+                
+            }
         }
         catch(Exception e){ //Something happened. Let's clean-up
 
@@ -1790,10 +1814,15 @@ public class FileIndex {
     }
 
 
+  //**************************************************************************
+  //** getOrCreateFile
+  //**************************************************************************
     private javaxt.media.models.File getOrCreateFile(
-        javaxt.io.File file, javaxt.media.models.Path path)
-        throws Exception {
+        javaxt.io.File file, javaxt.media.models.Path path) throws Exception {
 
+        if (file==null || !file.exists()){
+            throw new IllegalArgumentException("Invalid file: " + file);
+        }
 
 
       //Get or create file
@@ -1812,12 +1841,7 @@ public class FileIndex {
             f.setSize(file.getSize());
             f.setHash(file.getMD5());
             f.setType(file.getContentType());
-            try{
-                f.setDate(new javaxt.utils.Date(file.getDate()));
-            }
-            catch(Exception e){
-                console.log(file.getDate(), file);
-            }
+            f.setDate(new javaxt.utils.Date(file.getDate()));
             f.save();
         }
 
