@@ -2,6 +2,7 @@ package javaxt.media.utils;
 
 import java.util.*;
 import javaxt.json.JSONObject;
+import static javaxt.utils.Console.console;
 
 //******************************************************************************
 //**  ImageUtils
@@ -33,6 +34,7 @@ public class ImageUtils {
         private JSONObject metadata;
         private Image(javaxt.io.Image image, javaxt.io.File source, boolean derived){
             super(image.getBufferedImage());
+            super.setIIOMetadata(image.getIIOMetadata());
             this.source = source;
             this.derived = derived;
         }
@@ -162,7 +164,7 @@ public class ImageUtils {
 
 
           //Set path to JPEG for the primaryFile
-            javaxt.io.File jpeg = new javaxt.io.File(
+            var jpeg = new javaxt.io.File(
                 primaryFile.getDirectory(),
                 primaryFile.getName(false) + ".jpg"
             );
@@ -259,15 +261,16 @@ public class ImageUtils {
 
       //Parse iptc
         try{
-            java.util.HashMap<Integer, Object> iptc = image.getIptcTags();
+            HashMap<Integer, Object> iptc = image.getIptcTags();
             metadata.set("date", new javaxt.utils.Date(iptc.get(0x0237).toString()));
+            metadata.set("iptc", getJSON(iptc));
         }
         catch(Exception e){}
 
 
       //Parse exif
         try{
-            java.util.HashMap<Integer, Object> exif = image.getExifTags();
+            HashMap<Integer, Object> exif = image.getExifTags();
 
 
           //Parse date
@@ -293,19 +296,28 @@ public class ImageUtils {
             metadata.set("orientation", exif.get(0x0112));
             metadata.set("cameraMake", exif.get(0x010f));
             metadata.set("cameraModel", exif.get(0x0110));
-            metadata.set("focalLength", getFraction(exif.get(0x920A).toString()));
-            metadata.set("fStop", getFraction(exif.get(0x829D).toString()));
-            metadata.set("shutterSpeed", getFraction(exif.get(0x9201).toString()));
+            metadata.set("lensMake", exif.get(0xa433)); //untested
+            metadata.set("lensModel", exif.get(0xa434)); //untested
+            metadata.set("focalLength", getFraction(exif.get(0x920A)));
+            metadata.set("aperture", getFraction(exif.get(0x9202)));
+            metadata.set("fStop", getFraction(exif.get(0x829D)));
+            metadata.set("shutterSpeed", getFraction(exif.get(0x9201)));
+            metadata.set("exposureTime", exif.get(0x829A));
+            metadata.set("isoSpeed", getFraction(exif.get(0x8833))); //untested
 
+            try{
+                double[] coordinate = image.getGPSCoordinate(); //returns double[]{lon, lat};
+                if (coordinate!=null) metadata.set("location",
+                "POINT(" + coordinate[0] + " " + coordinate[1] + ")");
 
-            double[] coordinate = image.getGPSCoordinate(); //returns double[]{lon, lat};
-            if (coordinate!=null) metadata.set("location",
-            "POINT(" + coordinate[0] + " " + coordinate[1] + ")");
+                metadata.set("datum", image.getGPSDatum());
 
-            metadata.set("datum", image.getGPSDatum());
+                HashMap<Integer, Object> gpsTags = image.getGpsTags();
+                metadata.set("azimuth", getFraction(gpsTags.get(0x0011)));
+            }
+            catch(Exception e){}
 
-            HashMap<Integer, Object> gpsTags = image.getGpsTags();
-            metadata.set("azimuth", getFraction(gpsTags.get(0x0011).toString()));
+            metadata.set("exif", getJSON(exif));
         }
         catch(Exception e){}
 
@@ -360,9 +372,14 @@ public class ImageUtils {
 
             metadata.set("cameraMake", exif.get("Make"));
             metadata.set("cameraModel", exif.get("Model"));
+            metadata.set("lensMake", exif.get("LensMake")); //untested
+            metadata.set("lensModel", exif.get("LensModel")); //untested
             metadata.set("focalLength", getFraction(exif.get("FocalLength")));
+            metadata.set("aperture", getFraction(exif.get("ApertureValue"))); //untested
             metadata.set("fStop", getFraction(exif.get("FNumber")));
             metadata.set("shutterSpeed", getFraction(exif.get("ShutterSpeedValue")));
+            metadata.set("exposureTime", exif.get("ExposureTime")); //untested
+            metadata.set("isoSpeed", getFraction(exif.get("ISOSpeed"))); //untested
 
 
           //Parse coordinates
@@ -383,6 +400,8 @@ public class ImageUtils {
                 //e.printStackTrace();
             }
 
+            metadata.set("exif", getJSON(exif));
+
         }
         catch(Exception e){}
 
@@ -393,14 +412,34 @@ public class ImageUtils {
   //**************************************************************************
   //** getFraction
   //**************************************************************************
-    private static Double getFraction(String str){
+    private static Double getFraction(Object val){
+        if (val==null) return null;
         try{
-            String[] arr = str.trim().split("/");
-            return Double.parseDouble(arr[0])/Double.parseDouble(arr[1]);
+            var str = val.toString();
+            if (str.contains("/")){
+                String[] arr = val.toString().trim().split("/");
+                return Double.parseDouble(arr[0])/Double.parseDouble(arr[1]);
+            }
+            else{
+                return Double.parseDouble(str);
+            }
         }
         catch(Exception e){
             return null;
         }
+    }
+
+
+  //**************************************************************************
+  //** getJSON
+  //**************************************************************************
+    private static JSONObject getJSON(Map map){
+        if (map==null || map.isEmpty()) return null;
+        var json = new JSONObject();
+        for (Object key : map.keySet()){
+            json.set(key.toString(), map.get(key));
+        }
+        return json;
     }
 
 
