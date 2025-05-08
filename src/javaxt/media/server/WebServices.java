@@ -117,68 +117,53 @@ public class WebServices extends WebService {
         if (mediaID==null) return new ServiceResponse(400, "id is required");
 
 
+      //Get requested width and height
+        Integer width = request.getParameter("width").toInteger();
+        Integer height = request.getParameter("height").toInteger();
+
+
         //TODO: Check permissions
 
 
-      //Get thumbnail
-        javaxt.media.utils.RRDImage thumbnail;
+      //Get file
+        javaxt.io.File file;
+        javaxt.media.utils.RRDImage thumbnail = null;
         try (javaxt.sql.Connection conn = database.getConnection()){
-            var fileID = conn.getRecord(
+            javaxt.media.models.File f;
+
+            var record = conn.getRecord(
             "select file.id from media_item_file " +
             "join file on media_item_file.file_id=file.id " +
             "where media_item_file.media_item_id=" + mediaID +
-            " and lower(extension)='rrd'").get(0).toLong();
-            var file = new javaxt.media.models.File(fileID);
-            thumbnail = new javaxt.media.utils.RRDImage(file);
+            " and lower(extension)='rrd'");
+
+            if (record==null){ //small images don't have an rrd
+                record = conn.getRecord(
+                "select file.id from media_item_file " +
+                "join file on media_item_file.file_id=file.id " +
+                "where media_item_file.media_item_id=" + mediaID +
+                " and is_primary=true");
+                var fileID = record.get(0).toLong();
+                f = new javaxt.media.models.File(fileID);
+            }
+            else{
+                var fileID = record.get(0).toLong();
+                f = new javaxt.media.models.File(fileID);
+                thumbnail = new javaxt.media.utils.RRDImage(f);
+            }
+
+            var dir = new javaxt.io.Directory(f.getPath().getDir());
+            file = new javaxt.io.File(dir, f.getName() + "." + f.getExtension());
+            if (!file.exists()) throw new Exception();
+
         }
         catch(Exception e){
             return new ServiceResponse(404);
         }
 
 
-
-      //Get thumbnail entry that best fits the requested dimensions
-        Integer width = request.getParameter("width").toInteger();
-        Integer height = request.getParameter("height").toInteger();
-        javaxt.media.utils.RRDImage.Entry[] entries = thumbnail.getIndex();
-        String thumbnailID = null;
-        if (width==null && height==null){
-            thumbnailID = entries[0].getID();
-        }
-        else{
-            for (javaxt.media.utils.RRDImage.Entry entry : entries){
-
-                if (width==null){
-                    if (entry.getHeight()<=height){
-                        thumbnailID = entry.getID();
-                        break;
-                    }
-                }
-                else{
-                    if (height==null){
-                        if (entry.getWidth()<=width){
-                            thumbnailID = entry.getID();
-                            break;
-                        }
-                    }
-                    else{
-
-                        if (entry.getHeight()<=height){
-                            if (entry.getWidth()<=width){
-                                thumbnailID = entry.getID();
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if (thumbnailID==null) return new ServiceResponse(400, "Invalid request");
-
-
-
-      //Set thumbnail version number using the thumbnail date
-        javaxt.utils.Date lastModified = new javaxt.utils.Date(thumbnail.getFile().lastModified());
+      //Set image version number using the file date
+        javaxt.utils.Date lastModified = new javaxt.utils.Date(file.getDate());
         long currVersion = lastModified.toLong();
 
 
@@ -191,28 +176,91 @@ public class WebServices extends WebService {
 
 
 
-      //Return response
-        if (requestedVersion==currVersion){
-
-
-          //Send image
-            try (ByteArrayOutputStream output = new ByteArrayOutputStream()){
-                thumbnail.getImage(thumbnailID, output);
-                ServiceResponse response = new ServiceResponse(output.toByteArray());
-                //response.setCacheControl("public, max-age=31536000, immutable");
-                response.setContentType("image/jpeg");
-                response.setDate(lastModified);
-                return response;
-            }
-
-        }
-        else{
-
-          //Send redirect to a newer version
+      //Send redirect to a newer version as needed
+        if (requestedVersion!=currVersion){
             url.setParameter("v", currVersion+"");
             String location = url.toString();
             return new ServiceResponse(301, location);
+        }
 
+
+
+      //Get image
+        byte[] b = null;
+        String contentType = null;
+        if (thumbnail==null){
+            var ext = file.getExtension().toLowerCase();
+            if (ext.equals("jpg") || ext.equals("png")){
+                b = file.getBytes().toByteArray();
+                contentType = file.getContentType();
+            }
+            else{
+                b = file.getImage().getByteArray();
+                contentType = "image/jpeg";
+            }
+        }
+        else{
+
+
+          //Get thumbnail entry that best fits the requested dimensions
+            javaxt.media.utils.RRDImage.Entry[] entries = thumbnail.getIndex();
+            String thumbnailID = null;
+            if (width==null && height==null){
+                thumbnailID = entries[0].getID();
+            }
+            else{
+                for (javaxt.media.utils.RRDImage.Entry entry : entries){
+
+                    if (width==null){
+                        if (entry.getHeight()<=height){
+                            thumbnailID = entry.getID();
+                            break;
+                        }
+                    }
+                    else{
+                        if (height==null){
+                            if (entry.getWidth()<=width){
+                                thumbnailID = entry.getID();
+                                break;
+                            }
+                        }
+                        else{
+
+                            if (entry.getHeight()<=height){
+                                if (entry.getWidth()<=width){
+                                    thumbnailID = entry.getID();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+
+          //Get bytes
+            if (thumbnailID!=null){
+                try (ByteArrayOutputStream output = new ByteArrayOutputStream()){
+                    thumbnail.getImage(thumbnailID, output);
+                    b = output.toByteArray();
+                    contentType = "image/jpeg";
+                }
+            }
+
+        }
+
+
+
+      //Return response
+        if (b==null){
+            return new ServiceResponse(400, "Invalid request");
+        }
+        else{
+            ServiceResponse response = new ServiceResponse(b);
+            //response.setCacheControl("public, max-age=31536000, immutable");
+            response.setContentType(contentType);
+            response.setDate(lastModified);
+            return response;
         }
 
     }
