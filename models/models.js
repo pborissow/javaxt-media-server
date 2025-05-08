@@ -69,8 +69,9 @@ var models = {
             {name: 'name',          type: 'string'},
             {name: 'description',   type: 'string'},
             {name: 'type',          type: 'string'},
-            {name: 'date',          type: 'int'}, //YYYYMMDD
-            {name: 'hash',          type: 'string'}, //hash
+            {name: 'startDate',     type: 'date'},
+            {name: 'endDate',       type: 'date'},
+            {name: 'hash',          type: 'string'}, //phash
             {name: 'location',      type: 'geo'},
             {name: 'info',          type: 'json'}
         ],
@@ -78,7 +79,7 @@ var models = {
             {model: 'File',         name: 'files',      unique: true},
             {model: 'Keyword',      name: 'keywords',   unique: true}
         ],
-        indexes: ['date','hash']
+        indexes: ['startDate', 'endDate' ,'hash']
     },
 
 

@@ -2,6 +2,7 @@ package javaxt.media.models;
 import javaxt.json.*;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import javaxt.utils.Date;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.io.WKTReader;
 
@@ -18,7 +19,8 @@ public class MediaItem extends javaxt.sql.Model {
     private String name;
     private String description;
     private String type;
-    private Integer date;
+    private Date startDate;
+    private Date endDate;
     private String hash;
     private Geometry location;
     private JSONObject info;
@@ -35,7 +37,8 @@ public class MediaItem extends javaxt.sql.Model {
             java.util.Map.entry("name", "name"),
             java.util.Map.entry("description", "description"),
             java.util.Map.entry("type", "type"),
-            java.util.Map.entry("date", "date"),
+            java.util.Map.entry("startDate", "start_date"),
+            java.util.Map.entry("endDate", "end_date"),
             java.util.Map.entry("hash", "hash"),
             java.util.Map.entry("location", "location"),
             java.util.Map.entry("info", "info"),
@@ -83,7 +86,8 @@ public class MediaItem extends javaxt.sql.Model {
             this.name = getValue(rs, "name").toString();
             this.description = getValue(rs, "description").toString();
             this.type = getValue(rs, "type").toString();
-            this.date = getValue(rs, "date").toInteger();
+            this.startDate = getValue(rs, "start_date").toDate();
+            this.endDate = getValue(rs, "end_date").toDate();
             this.hash = getValue(rs, "hash").toString();
             try{this.location = new WKTReader().read(getValue(rs, "location").toString());}catch(Exception e){}
             this.info = new JSONObject(getValue(rs, "info").toString());
@@ -127,7 +131,8 @@ public class MediaItem extends javaxt.sql.Model {
         this.name = json.get("name").toString();
         this.description = json.get("description").toString();
         this.type = json.get("type").toString();
-        this.date = json.get("date").toInteger();
+        this.startDate = json.get("startDate").toDate();
+        this.endDate = json.get("endDate").toDate();
         this.hash = json.get("hash").toString();
         try {
             this.location = new WKTReader().read(json.get("location").toString());
@@ -176,12 +181,20 @@ public class MediaItem extends javaxt.sql.Model {
         this.type = type;
     }
 
-    public Integer getDate(){
-        return date;
+    public Date getStartDate(){
+        return startDate;
     }
 
-    public void setDate(Integer date){
-        this.date = date;
+    public void setStartDate(Date startDate){
+        this.startDate = startDate;
+    }
+
+    public Date getEndDate(){
+        return endDate;
+    }
+
+    public void setEndDate(Date endDate){
+        this.endDate = endDate;
     }
 
     public String getHash(){
