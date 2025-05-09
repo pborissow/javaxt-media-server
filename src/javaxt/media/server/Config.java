@@ -180,7 +180,18 @@ public class Config {
 
 
               //Initialize schema (create tables, indexes, etc)
-                if (schema!=null) DbUtils.initSchema(database, schema, null);
+                boolean schemaInitialized = DbUtils.initSchema(database, schema, null);
+
+
+              //Insert date into the settings table
+                if (schemaInitialized){
+                    try(javaxt.sql.Connection conn = database.getConnection()){
+                        conn.execute(
+                            "insert into setting(key,value) " +
+                            "values('db_date','"+ new javaxt.utils.Date().toLong()+"')"
+                        );
+                    }
+                }
 
 
               //Enable database caching
