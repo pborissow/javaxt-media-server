@@ -565,6 +565,22 @@ var models = {
         indexes: [
             {name: 'idx_data_access', type: 'unique', field: ['dataset','group']}
         ]
+    },
+
+
+  //**************************************************************************
+  //** Setting
+  //**************************************************************************
+  /** Used to manage application config/settings.
+   */
+    Setting: {
+        fields: [
+            {name: 'key',      type: 'string',  required: true},
+            {name: 'value',    type: 'string',  required: true}
+        ],
+        indexes: [
+            {name: 'idx_setting', type: 'unique', field: ['key']}
+        ]
     }
 
 };
