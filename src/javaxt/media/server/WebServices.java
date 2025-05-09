@@ -15,6 +15,7 @@ import javaxt.sql.Model;
 
 import javaxt.express.*;
 import javaxt.http.servlet.*;
+import javaxt.express.services.FileService;
 import javaxt.express.services.QueryService;
 import javaxt.http.websocket.WebSocketListener;
 import javaxt.express.notification.NotificationService;
@@ -34,10 +35,11 @@ import javaxt.media.models.Setting;
 public class WebServices extends WebService {
 
     private javaxt.sql.Database database;
-    private long dbDate;
     private ConcurrentHashMap<String, WebService> webservices;
     private ConcurrentHashMap<Long, WebSocketListener> listeners;
     private AtomicLong webSocketID;
+    private FileService fileService;
+    private long dbDate;
 
 
   //**************************************************************************
@@ -71,6 +73,10 @@ public class WebServices extends WebService {
             if (msg==null) e.printStackTrace();
             else console.log(msg);
         }
+
+
+      //Instaniate the FileService
+        fileService = new FileService(new javaxt.io.Directory("/"));
 
 
       //Websocket stuff
@@ -476,7 +482,7 @@ public class WebServices extends WebService {
         var user = (User) request.getUser();
         if (!isAdmin(user)) return new ServiceResponse(403, "Forbidden");
 
-        
+
       //Parse payload
         request.parseJson();
 
@@ -523,6 +529,50 @@ public class WebServices extends WebService {
    */
     public ServiceResponse deleteSetting(ServiceRequest request) throws Exception {
         return new ServiceResponse(403, "Forbidden");
+    }
+
+
+  //**************************************************************************
+  //** dir
+  //**************************************************************************
+  /** Custom method used to browse files on the server, upload new files,
+   *  and download.
+   */
+    public ServiceResponse dir(ServiceRequest request) throws Exception {
+
+      //Validate user
+        var user = (User) request.getUser();
+        if (!isAdmin(user)) return new ServiceResponse(403, "Forbidden");
+
+        try{
+
+            String op = request.getPath(0).toString();
+            if (op==null) op = "";
+            else op = op.toLowerCase().trim();
+
+            if (op.equals("upload")){
+                return fileService.upload(request, (javaxt.utils.Record record)->{
+
+                    String path = record.get("path").toString();
+                    javaxt.io.File file = (javaxt.io.File) record.get("file").toObject();
+                    path += file.getName();
+
+                    //NotificationService.notify(record.get("op").toString(), "File", new javaxt.utils.Value(path));
+                });
+            }
+            else if (op.equals("download")){
+                ServiceResponse response = fileService.getFile(request);
+                String fileName = response.get("name").toString();
+                response.setContentDisposition(fileName);
+                return response;
+            }
+            else{
+                return fileService.getList(request);
+            }
+        }
+        catch(Exception e){
+            return new ServiceResponse(e);
+        }
     }
 
 
