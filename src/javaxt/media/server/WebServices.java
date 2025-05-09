@@ -19,6 +19,7 @@ import javaxt.express.services.QueryService;
 import javaxt.http.websocket.WebSocketListener;
 import javaxt.express.notification.NotificationService;
 import javaxt.media.models.Feature;
+import javaxt.media.models.Setting;
 
 
 //******************************************************************************
@@ -33,6 +34,7 @@ import javaxt.media.models.Feature;
 public class WebServices extends WebService {
 
     private javaxt.sql.Database database;
+    private long dbDate;
     private ConcurrentHashMap<String, WebService> webservices;
     private ConcurrentHashMap<Long, WebSocketListener> listeners;
     private AtomicLong webSocketID;
@@ -43,7 +45,8 @@ public class WebServices extends WebService {
   //**************************************************************************
     public WebServices(javaxt.sql.Database database) throws Exception {
         this.database = database;
-
+        this.dbDate = database.getRecord(
+        "select value from setting where key='db_date'").get(0).toLong();
 
 
       //Register models
@@ -173,12 +176,15 @@ public class WebServices extends WebService {
         long requestedVersion = 0;
         try{ requestedVersion = Long.parseLong(url.getParameter("v")); }
         catch(Exception e){}
-
+        long requestedDB = 0;
+        try{ requestedDB = Long.parseLong(url.getParameter("db")); }
+        catch(Exception e){}
 
 
       //Send redirect to a newer version as needed
-        if (requestedVersion!=currVersion){
+        if (requestedVersion!=currVersion || requestedDB!=dbDate){
             url.setParameter("v", currVersion+"");
+            url.setParameter("db", dbDate+"");
             String location = url.toString();
             return new ServiceResponse(301, location);
         }
@@ -446,6 +452,82 @@ public class WebServices extends WebService {
         for (long id : ids){
             getSubFolders(id, folderIDs, conn);
         }
+    }
+
+
+  //**************************************************************************
+  //** getSetting
+  //**************************************************************************
+    public ServiceResponse getSetting(ServiceRequest request) throws Exception {
+        var key = request.getParameter("key").toString();
+        var setting = Setting.get("key=",key.toLowerCase());
+        var value = setting==null ? null : setting.getValue();
+        if (value==null) return new ServiceResponse(404);
+        else return new ServiceResponse(value);
+    }
+
+
+  //**************************************************************************
+  //** saveSetting
+  //**************************************************************************
+    public ServiceResponse saveSetting(ServiceRequest request) throws Exception {
+
+      //Validate user
+        var user = (User) request.getUser();
+        if (!isAdmin(user)) return new ServiceResponse(403, "Forbidden");
+
+        
+      //Parse payload
+        request.parseJson();
+
+
+      //Get key
+        var key = request.getParameter("key").toString();
+        if (key!=null) key = key.toLowerCase();
+        if (key==null || key.isEmpty()) return new ServiceResponse(400, "Key is required");
+
+
+      //Get value
+        var value = request.getParameter("value").toString();
+        if (value==null){
+            try{
+                value = new String(request.getPayload()).trim();
+            }
+            catch(Exception e){
+                value = "";
+            }
+        }
+        else{
+            value = value.trim();
+        }
+
+
+      //Create or update setting
+        var setting = Setting.get("key=",key);
+        if (setting==null){
+            setting = new Setting();
+            setting.setKey(key);
+        }
+        setting.setValue(value);
+        setting.save();
+        notify("update", setting, user);
+        return new ServiceResponse(setting.toJson());
+    }
+
+
+  //**************************************************************************
+  //** deleteSetting
+  //**************************************************************************
+  /** Overrides the default deleteSetting method to prevent settings from
+   *  being deleted.
+   */
+    public ServiceResponse deleteSetting(ServiceRequest request) throws Exception {
+        return new ServiceResponse(403, "Forbidden");
+    }
+
+
+    private boolean isAdmin(User user){
+        return true;
     }
 
 
