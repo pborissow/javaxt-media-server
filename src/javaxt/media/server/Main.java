@@ -404,7 +404,7 @@ public class Main {
    */
     private static void convert(HashMap<String, String> args) throws Exception {
 
-        ImageMagick magick = new ImageMagick(Config.get("apps").get("ImageMagick").toString());
+        ImageMagick magick = getImageMagick();
 
         java.io.File f = new java.io.File(args.get("-convert"));
         if (f.isFile()){
@@ -481,12 +481,12 @@ public class Main {
 
         String test = args.get("-test");
         if (test.equals("ImageMagick")){
-            new ImageMagick(Config.get("apps").get("ImageMagick").toString());
-            System.out.println("OK");
+            var magick = getImageMagick();
+            System.out.println(magick==null ? "Fail" : "OK");
         }
         else if (test.equals("FFmpeg")){
-            new FFmpeg(Config.get("apps").get("FFmpeg").toString());
-            System.out.println("OK");
+            var ffmpeg = getFFmpeg();
+            System.out.println(ffmpeg==null ? "Fail" : "OK");
         }
         else if (test.equals("metadata")){
 
@@ -495,10 +495,16 @@ public class Main {
 
 
           //Instantiate command line apps
-            ImageMagick magick = new ImageMagick(Config.get("apps").get("ImageMagick").toString());
-            FFmpeg ffmpeg = new FFmpeg(Config.get("apps").get("FFmpeg").toString());
+            var magick = getImageMagick();
+            var ffmpeg = getFFmpeg();
+            var imageUtils = new ImageUtils(magick, ffmpeg);
 
-            if (ffmpeg.isMovie(file)){
+
+            System.out.println(imageUtils.getImage(file).getMetadata().toString(3));
+            if (true) return;
+
+
+            if (imageUtils.isMovie(file)){
 
 
                 System.out.println(ffmpeg.getMetadata(file).toString(3));
@@ -552,7 +558,7 @@ public class Main {
         else if (test.equals("faces")){
 
           //Get ImageMagick
-            ImageMagick magick = new ImageMagick(Config.get("apps").get("ImageMagick").toString());
+            ImageMagick magick = getImageMagick();
             ImageUtils imageUtils = new ImageUtils(magick);
 
 
@@ -582,7 +588,7 @@ public class Main {
         }
         else if (test.equals("faceComparison")){
 
-            ImageMagick magick = new ImageMagick(Config.get("apps").get("ImageMagick").toString());
+            ImageMagick magick = getImageMagick();
             Object faceDetecionModel = OpenCV.getFaceDetector(Config.getOnnxFile("face_detection_yunet_2023mar"));
             Object faceRecognitionModel = OpenCV.getFaceRecognizer(Config.getOnnxFile("face_recognition_sface_2021dec"));
             ImageUtils imageUtils = new ImageUtils(magick);
