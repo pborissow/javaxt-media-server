@@ -840,8 +840,22 @@ public class FileIndex {
                                 String fileName = file.getName(false).toLowerCase();
                                 ArrayList<javaxt.io.File> arr = files.get(fileName);
                                 if (arr==null){
-                                    arr = new ArrayList<>();
-                                    files.put(fileName, arr);
+
+
+                                  //Special case for iPhones with an "E" sidecar
+                                  //file. These are often cropped or smaller
+                                  //versions of the original file. 
+                                    if (fileName.startsWith("img_e")){
+                                        var f = "img_" + fileName.substring(5);
+                                        console.log("Found E!", fileName, f);
+                                        arr = files.get(f);
+                                    }
+
+
+                                    if (arr==null){
+                                        arr = new ArrayList<>();
+                                        files.put(fileName, arr);
+                                    }
                                 }
                                 arr.add(file);
                             }
@@ -1665,7 +1679,7 @@ public class FileIndex {
               //If no files were added, then the temp file shouldn't exist.
               //But let's check if it does and delete it as needed.
                 if (temp.exists()) temp.delete();
-                
+
             }
         }
         catch(Exception e){ //Something happened. Let's clean-up
