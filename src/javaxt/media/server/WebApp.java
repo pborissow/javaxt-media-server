@@ -47,7 +47,7 @@ public class WebApp extends HttpServlet {
   //**************************************************************************
     public WebApp() throws Exception {
         try{
-            
+
           //Start the NotificationService
             NotificationService.start();
 
@@ -118,6 +118,7 @@ public class WebApp extends HttpServlet {
             javaxt.utils.URL url = new javaxt.utils.URL(request.getURL());
             if (!url.getProtocol().equalsIgnoreCase("https")){
                 url.setProtocol("https");
+                //url.setPort(sslPort); //TODO: Get SSL port
                 response.sendRedirect(url.toString(), true);
                 return;
             }
@@ -158,29 +159,10 @@ public class WebApp extends HttpServlet {
 
       //Send static file if we can
         if (!request.isWebSocket() && fileManager!=null){
-            if (service.length()==0){
-
-              //If the service is empty, send welcome file (e.g. index.html)
-                fileManager.sendFile(path, request, response);
+            java.io.File file = fileManager.getFile(path);
+            if (file!=null){
+                fileManager.sendFile(file, request, response);
                 return;
-            }
-            else{
-
-                for (Object obj : web.getChildren()){
-
-                    String name;
-                    if (obj instanceof javaxt.io.File){
-                        name = ((javaxt.io.File) obj).getName();
-                    }
-                    else{
-                        name = ((javaxt.io.Directory) obj).getName();
-                    }
-
-                    if (service.equalsIgnoreCase(name)){
-                        fileManager.sendFile(path, request, response);
-                        return;
-                    }
-                }
             }
         }
 
@@ -272,12 +254,8 @@ public class WebApp extends HttpServlet {
                     if (ws.getStatus()==-1) throw new Exception("Communication Failure.");
                     response.setStatus(ws.getStatus());
                     Map<String, List<String>> headers = ws.getHeaders();
-                    Iterator<String> it = headers.keySet().iterator();
-                    while (it.hasNext()){
-                        String key = it.next();
-                        Iterator<String> values = headers.get(key).iterator();
-                        while (values.hasNext()){
-                            String value = values.next();
+                    for (String key : headers.keySet()){
+                        for (String value : headers.get(key)){
                             if (value!=null) response.setHeader(key, value);
                         }
                     }
@@ -435,9 +413,7 @@ public class WebApp extends HttpServlet {
                     Recordset rs = null;
 
 
-                    Iterator<Long> it = userActivity.keySet().iterator();
-                    while (it.hasNext()){
-                        long key = it.next();
+                    for (long key : userActivity.keySet()){
                         if (key<currTime){
 
                             String time = key + "";
@@ -447,9 +423,7 @@ public class WebApp extends HttpServlet {
                             HashMap<Long, AtomicInteger> ua = userActivity.get(key);
 
                             HashSet<Long> inserts = new HashSet<>();
-                            Iterator<Long> i2 = ua.keySet().iterator();
-                            while (i2.hasNext()){
-                                long userID = i2.next();
+                            for (long userID : ua.keySet()){
                                 int hits = ua.get(userID).get();
 
                                 try{
