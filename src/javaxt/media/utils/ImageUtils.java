@@ -190,7 +190,7 @@ public class ImageUtils {
 
 
             if (image==null || image.getBufferedImage()==null) return null;
-            else return new Image(image, jpeg, true);
+            else return new Image(image, primaryFile, true);
         }
         else{
 
@@ -302,7 +302,7 @@ public class ImageUtils {
             metadata.set("aperture", getFraction(exif.get(0x9202)));
             metadata.set("fStop", getFraction(exif.get(0x829D)));
             metadata.set("shutterSpeed", getFraction(exif.get(0x9201)));
-            metadata.set("exposureTime", exif.get(0x829A));
+            metadata.set("exposureTime", getFraction(exif.get(0x829A)));
             metadata.set("isoSpeed", getFraction(exif.get(0x8833))); //untested
 
             try{
@@ -372,13 +372,13 @@ public class ImageUtils {
 
             metadata.set("cameraMake", exif.get("Make"));
             metadata.set("cameraModel", exif.get("Model"));
-            metadata.set("lensMake", exif.get("LensMake")); //untested
-            metadata.set("lensModel", exif.get("LensModel")); //untested
+            metadata.set("lensMake", exif.get("LensMake"));
+            metadata.set("lensModel", exif.get("LensModel"));
             metadata.set("focalLength", getFraction(exif.get("FocalLength")));
             metadata.set("aperture", getFraction(exif.get("ApertureValue"))); //untested
             metadata.set("fStop", getFraction(exif.get("FNumber")));
             metadata.set("shutterSpeed", getFraction(exif.get("ShutterSpeedValue")));
-            metadata.set("exposureTime", exif.get("ExposureTime")); //untested
+            metadata.set("exposureTime", getFraction(exif.get("ExposureTime")));
             metadata.set("isoSpeed", getFraction(exif.get("ISOSpeed"))); //untested
 
 
