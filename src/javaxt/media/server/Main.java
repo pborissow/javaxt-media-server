@@ -317,19 +317,19 @@ public class Main {
 
 
       //Get face detection model
-        javaxt.io.File faceDetecionModel = Config.getOnnxFile("face_detection_yunet_2023mar");
+        javaxt.io.File faceDetecionModel = Config.getOnnxFile("face_detection");
 
 
       //Instantiate ImageUtils
         ImageUtils imageUtils = new ImageUtils();
-        imageUtils.addImageMagick(getImageMagick());
-        imageUtils.addFFmpeg(getFFmpeg());
+        imageUtils.addImageMagick(Config.getImageMagick());
+        imageUtils.addFFmpeg(Config.getFFmpeg());
         imageUtils.addFaceDetecionModel(faceDetecionModel);
 
 
 
       //Generate file filter
-        var fileFilters = new ArrayList<>();
+        var fileFilters = new ArrayList<String>();
         for (String ext : imageUtils.getSupportedFileExtensions()){
             fileFilters.add("*." + ext);
         }
@@ -404,7 +404,7 @@ public class Main {
    */
     private static void convert(HashMap<String, String> args) throws Exception {
 
-        ImageMagick magick = getImageMagick();
+        ImageMagick magick = Config.getImageMagick();
 
         java.io.File f = new java.io.File(args.get("-convert"));
         if (f.isFile()){
@@ -481,11 +481,11 @@ public class Main {
 
         String test = args.get("-test");
         if (test.equals("ImageMagick")){
-            var magick = getImageMagick();
+            var magick = Config.getImageMagick();
             System.out.println(magick==null ? "Fail" : "OK");
         }
         else if (test.equals("FFmpeg")){
-            var ffmpeg = getFFmpeg();
+            var ffmpeg = Config.getFFmpeg();
             System.out.println(ffmpeg==null ? "Fail" : "OK");
         }
         else if (test.equals("metadata")){
@@ -495,8 +495,8 @@ public class Main {
 
 
           //Instantiate command line apps
-            var magick = getImageMagick();
-            var ffmpeg = getFFmpeg();
+            var magick = Config.getImageMagick();
+            var ffmpeg = Config.getFFmpeg();
             var imageUtils = new ImageUtils(magick, ffmpeg);
 
 
@@ -558,7 +558,7 @@ public class Main {
         else if (test.equals("faces")){
 
           //Get ImageMagick
-            ImageMagick magick = getImageMagick();
+            ImageMagick magick = Config.getImageMagick();
             ImageUtils imageUtils = new ImageUtils(magick);
 
 
@@ -568,7 +568,7 @@ public class Main {
 
 
           //Detect faces
-            javaxt.io.File model = Config.getOnnxFile("face_detection_yunet_2023mar");
+            javaxt.io.File model = Config.getOnnxFile("face_detection");
             var faces = OpenCV.detectFaces(img, OpenCV.getFaceDetector(model));
 
 
@@ -588,9 +588,9 @@ public class Main {
         }
         else if (test.equals("faceComparison")){
 
-            ImageMagick magick = getImageMagick();
-            Object faceDetecionModel = OpenCV.getFaceDetector(Config.getOnnxFile("face_detection_yunet_2023mar"));
-            Object faceRecognitionModel = OpenCV.getFaceRecognizer(Config.getOnnxFile("face_recognition_sface_2021dec"));
+            ImageMagick magick = Config.getImageMagick();
+            Object faceDetecionModel = OpenCV.getFaceDetector(Config.getOnnxFile("face_detection"));
+            Object faceRecognitionModel = OpenCV.getFaceRecognizer(Config.getOnnxFile("facial_recognition"));
             ImageUtils imageUtils = new ImageUtils(magick);
 
 
@@ -686,6 +686,13 @@ public class Main {
             }
             console.log("Processed " + x + " files");
         }
+        else if (test.equals("heic")){
+            javaxt.io.Directory dir = getDirectory(args);
+            if (dir==null) return;
+            for (javaxt.io.File heicFile : dir.getFiles("*.HEIC")){
+                Openize.createJPEG(heicFile);
+            }
+        }
         else{
             System.out.println("Invalid -test");
         }
@@ -723,13 +730,4 @@ public class Main {
         }
     }
 
-    private static ImageMagick getImageMagick(){
-        try {return new ImageMagick(Config.get("apps").get("ImageMagick").toString());}
-        catch(Exception e){return null;}
-    }
-
-    private static FFmpeg getFFmpeg(){
-        try {return new FFmpeg(Config.get("apps").get("FFmpeg").toString());}
-        catch(Exception e){return null;}
-    }
 }

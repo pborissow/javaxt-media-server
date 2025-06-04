@@ -22,6 +22,9 @@ import javaxt.express.notification.NotificationService;
 import javaxt.media.models.Feature;
 import javaxt.media.models.Setting;
 
+import javaxt.media.utils.FFmpeg;
+import javaxt.media.utils.ImageMagick;
+
 
 //******************************************************************************
 //**  WebServices
@@ -76,7 +79,7 @@ public class WebServices extends WebService {
 
 
       //Instaniate the FileService
-        fileService = new FileService(new javaxt.io.Directory("/"));
+        fileService = new FileService();
 
 
       //Websocket stuff
@@ -94,7 +97,8 @@ public class WebServices extends WebService {
             long modelID = 0;
             long userID = -1;
             if (model.equals("SQL")){
-                javaxt.express.services.QueryService.QueryJob queryJob = (javaxt.express.services.QueryService.QueryJob) data.toObject();
+                javaxt.express.services.QueryService.QueryJob queryJob =
+                (javaxt.express.services.QueryService.QueryJob) data.toObject();
                 userID = queryJob.getUserID();
                 me.notify(event+","+model+","+queryJob.getID()+","+userID);
             }
@@ -508,6 +512,28 @@ public class WebServices extends WebService {
         }
 
 
+      //Validate setting
+        if (!value.isEmpty()){
+            if (key.equals("imagemagick")){
+                try {new ImageMagick(value);}
+                catch(Exception e){return new ServiceResponse(400, "Invalid path");}
+            }
+            else if (key.equals("ffmpeg")){
+                try {new FFmpeg(value);}
+                catch(Exception e){return new ServiceResponse(400, "Invalid path");}
+            }
+            else if (key.equals("face_detection") || key.equals("facial_recognition")){
+                try {
+                    var file = new javaxt.io.File(value);
+                    if (!file.exists() || !file.getExtension().equalsIgnoreCase("onnx")){
+                        throw new Exception();
+                    }
+                }
+                catch(Exception e){return new ServiceResponse(400, "Invalid path");}
+            }
+        }
+
+
       //Create or update setting
         var setting = Setting.get("key=",key);
         if (setting==null){
@@ -576,6 +602,9 @@ public class WebServices extends WebService {
     }
 
 
+  //**************************************************************************
+  //** isAdmin
+  //**************************************************************************
     private boolean isAdmin(User user){
         return true;
     }
@@ -659,10 +688,8 @@ public class WebServices extends WebService {
 
     private void notify(String msg){
         synchronized(listeners){
-            Iterator<Long> it = listeners.keySet().iterator();
-            while(it.hasNext()){
-                WebSocketListener ws = listeners.get(it.next());
-                ws.send(msg);
+            for (Long key : listeners.keySet()){
+                listeners.get(key).send(msg);
             }
         }
     }

@@ -10,6 +10,10 @@ import javaxt.express.utils.DbUtils;
 import static javaxt.express.ConfigFile.*;
 import static javaxt.utils.Console.console;
 
+import javaxt.media.utils.FFmpeg;
+import javaxt.media.utils.ImageMagick;
+
+
 //******************************************************************************
 //**  Config Class
 //******************************************************************************
@@ -23,6 +27,7 @@ public class Config {
 
     private static javaxt.express.Config config = new javaxt.express.Config();
     private static AtomicBoolean dbInitialized = new AtomicBoolean(false);
+    private static AtomicBoolean modelsInitialized = new AtomicBoolean(false);
     private Config(){}
 
 
@@ -94,19 +99,6 @@ public class Config {
         modelConfig.set("schema", "models/schema.sql");
         updateFile("schema", modelConfig, configFile);
         config.set("schemaFile", new javaxt.io.File(modelConfig.get("schema").toString()));
-
-
-      //Add "models" to the config
-        JSONObject models = new JSONObject();
-        modelConfig.set("opencv", "models/opencv");
-        updateDir("opencv", modelConfig, configFile, false);
-        String opencv = modelConfig.get("opencv").toString();
-        if (opencv!=null){
-            for (javaxt.io.File file : new javaxt.io.Directory(opencv).getFiles("*.onnx")){
-                models.set(file.getName(false), file.toString());
-            }
-            config.set("models", models);
-        }
 
 
       //Run validations
@@ -215,9 +207,44 @@ public class Config {
   //** initModels
   //**************************************************************************
     public static void initModels() throws Exception {
-        Database database = getDatabase();
-        javaxt.io.Jar jar = new javaxt.io.Jar(Config.class);
-        Model.init(jar, database.getConnectionPool());
+        synchronized(modelsInitialized){
+            boolean initialized = modelsInitialized.get();
+            if (!initialized){
+                Database database = getDatabase();
+                javaxt.io.Jar jar = new javaxt.io.Jar(Config.class);
+                Model.init(jar, database.getConnectionPool());
+                modelsInitialized.set(true);
+            }
+        }
+    }
+
+
+  //**************************************************************************
+  //** getSetting
+  //**************************************************************************
+  /** Returns a setting from the database
+   */
+    public static String getSetting(String key) throws Exception {
+        initModels();
+        return javaxt.media.models.Setting.get("key=",key.toLowerCase()).getValue();
+    }
+
+
+  //**************************************************************************
+  //** getImageMagick
+  //**************************************************************************
+    public static ImageMagick getImageMagick(){
+        try {return new ImageMagick(getSetting("ImageMagick"));}
+        catch(Exception e){return null;}
+    }
+
+
+  //**************************************************************************
+  //** getFFmpeg
+  //**************************************************************************
+    public static FFmpeg getFFmpeg(){
+        try {return new FFmpeg(getSetting("FFmpeg"));}
+        catch(Exception e){return null;}
     }
 
 
@@ -225,8 +252,13 @@ public class Config {
   //** getOnnxFile
   //**************************************************************************
     public static javaxt.io.File getOnnxFile(String name){
-        String path = get("models").get(name).toString();
-        if (path==null) return null;
-        return new javaxt.io.File(path);
+        try {
+            if (name.equals("face_detection") || name.equals("facial_recognition")){
+                var file = new javaxt.io.File(getSetting(name));
+                if (file.exists()) return file;
+            }
+        }
+        catch(Exception e){}
+        return null;
     }
 }
