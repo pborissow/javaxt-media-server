@@ -15,7 +15,7 @@ public class UserPreference extends javaxt.sql.Model {
 
     private User user;
     private String key;
-    private JSONObject value;
+    private String value;
 
 
   //**************************************************************************
@@ -67,7 +67,7 @@ public class UserPreference extends javaxt.sql.Model {
             this.id = getValue(rs, "id").toLong();
             Long userID = getValue(rs, "user_id").toLong();
             this.key = getValue(rs, "key").toString();
-            this.value = new JSONObject(getValue(rs, "value").toString());
+            this.value = getValue(rs, "value").toString();
 
 
 
@@ -101,7 +101,7 @@ public class UserPreference extends javaxt.sql.Model {
             catch(Exception e){}
         }
         this.key = json.get("key").toString();
-        this.value = json.get("value").toJSONObject();
+        this.value = json.get("value").toString();
     }
 
 
@@ -121,11 +121,11 @@ public class UserPreference extends javaxt.sql.Model {
         this.key = key;
     }
 
-    public JSONObject getValue(){
+    public String getValue(){
         return value;
     }
 
-    public void setValue(JSONObject value){
+    public void setValue(String value){
         this.value = value;
     }
     

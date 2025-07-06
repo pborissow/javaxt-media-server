@@ -356,11 +356,11 @@ var models = {
     User: {
         implements: ['java.security.Principal', 'javaxt.express.User'],
         fields: [
-            {name: 'person',    type: 'Person' ,   required: true},
-            {name: 'active',    type: 'boolean',   required: true}
+            {name: 'person',    type: 'Person',   required: true},
+            {name: 'status',    type: 'int',      required: true}
         ],
         defaults: [
-            {name: 'active',    value: true}
+            {name: 'status',    value: 1}
         ],
         indexes: [
             {name: 'idx_user', type: 'unique', field: ['person']}
@@ -417,7 +417,7 @@ var models = {
         fields: [
             {name: 'user',     type: 'User',    required: true},
             {name: 'key',      type: 'string',  required: true},
-            {name: 'value',    type: 'json',    required: true}
+            {name: 'value',    type: 'string',  required: true}
         ],
         indexes: [
             {name: 'idx_user_preference', type: 'unique', field: ['user','key','value']}

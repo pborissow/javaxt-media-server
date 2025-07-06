@@ -15,7 +15,7 @@ public class User extends javaxt.sql.Model
     implements java.security.Principal, javaxt.express.User {
 
     private Person person;
-    private Boolean active;
+    private Integer status;
 
 
   //**************************************************************************
@@ -25,7 +25,7 @@ public class User extends javaxt.sql.Model
         super("user", java.util.Map.ofEntries(
             
             java.util.Map.entry("person", "person_id"),
-            java.util.Map.entry("active", "active")
+            java.util.Map.entry("status", "status")
 
         ));
         
@@ -65,7 +65,7 @@ public class User extends javaxt.sql.Model
         try{
             this.id = getValue(rs, "id").toLong();
             Long personID = getValue(rs, "person_id").toLong();
-            this.active = getValue(rs, "active").toBoolean();
+            this.status = getValue(rs, "status").toInteger();
 
 
 
@@ -98,7 +98,7 @@ public class User extends javaxt.sql.Model
             }
             catch(Exception e){}
         }
-        this.active = json.get("active").toBoolean();
+        this.status = json.get("status").toInteger();
     }
 
 
@@ -114,12 +114,12 @@ public class User extends javaxt.sql.Model
         this.person = person;
     }
 
-    public Boolean getActive(){
-        return active;
+    public Integer getStatus(){
+        return status;
     }
 
-    public void setActive(Boolean active){
-        this.active = active;
+    public void setStatus(Integer status){
+        this.status = status;
     }
     
     
