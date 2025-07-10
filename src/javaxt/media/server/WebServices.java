@@ -9,9 +9,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 
 //JavaXT includes
+import javaxt.sql.*;
 import javaxt.json.*;
-import javaxt.io.Image;
-import javaxt.sql.Model;
 
 import javaxt.express.*;
 import javaxt.http.servlet.*;
@@ -19,9 +18,9 @@ import javaxt.express.services.FileService;
 import javaxt.express.services.QueryService;
 import javaxt.http.websocket.WebSocketListener;
 import javaxt.express.notification.NotificationService;
+
 import javaxt.media.models.Feature;
 import javaxt.media.models.Setting;
-
 import javaxt.media.utils.FFmpeg;
 import javaxt.media.utils.ImageMagick;
 
@@ -57,10 +56,7 @@ public class WebServices extends WebService {
       //Register models
         javaxt.io.Jar jar = new javaxt.io.Jar(this.getClass());
         for (Class c : jar.getClasses()){
-            if (javaxt.sql.Model.class.isAssignableFrom(c)){
-                Model.init(c, database.getConnectionPool());
-                addModel(c);
-            }
+            if (javaxt.sql.Model.class.isAssignableFrom(c)) addModel(c);
         }
 
 
@@ -283,6 +279,41 @@ public class WebServices extends WebService {
 
 
   //**************************************************************************
+  //** getVideo
+  //**************************************************************************
+    public ServiceResponse getVideo(ServiceRequest request) throws Exception {
+
+      //Get mediaID
+        Long mediaID = getMediaID(request);
+        if (mediaID==null) return new ServiceResponse(400, "id is required");
+
+      //Get file
+        try (javaxt.sql.Connection conn = database.getConnection()){
+
+            var record = conn.getRecord(
+            "select file.id from media_item_file " +
+            "join file on media_item_file.file_id=file.id " +
+            "where media_item_file.media_item_id=" + mediaID +
+            " and lower(extension)='mp4'");
+
+            if (record!=null){
+                var fileID = record.get(0).toLong();
+                javaxt.media.models.File f = new javaxt.media.models.File(fileID);
+                var dir = new javaxt.io.Directory(f.getPath().getDir());
+                javaxt.io.File file = new javaxt.io.File(dir, f.getName() + "." + f.getExtension());
+                if (file.exists()) return new ServiceResponse(file);
+            }
+
+        }
+        catch(Exception e){
+
+        }
+
+        return new ServiceResponse(404);
+    }
+
+
+  //**************************************************************************
   //** getFace
   //**************************************************************************
     public ServiceResponse getFace(ServiceRequest request) throws Exception {
@@ -350,6 +381,20 @@ public class WebServices extends WebService {
     }
 
 
+  //**************************************************************************
+  //** getMediaItem
+  //**************************************************************************
+  /** Intercept and prune MediaItem requests
+   */
+    public ServiceResponse getMediaItem(ServiceRequest request) throws Exception {
+        Long mediaID = getMediaID(request);
+        if (mediaID==null) return new ServiceResponse(400, "id is required");
+
+        var json = new javaxt.media.models.MediaItem(mediaID).toJson();
+        json.remove("files");
+        return new ServiceResponse(json);
+    }
+
 
   //**************************************************************************
   //** getIndex
@@ -397,7 +442,7 @@ public class WebServices extends WebService {
 
                 ArrayList<Long> folderIDs = new ArrayList<>();
                 getSubFolders(parentID, folderIDs, conn);
-                sql = "select media_item.id, name, hash from media_item " +
+                sql = "select media_item.id, name, type, hash from media_item " +
                 "join folder_entry on media_item.id=folder_entry.item_id " +
                 "where folder_id in(" + folderIDs
                     .stream().map(Object::toString).collect(Collectors.joining(",")) +
@@ -411,10 +456,10 @@ public class WebServices extends WebService {
 
 
               //Find folders and images
-                String folderQuery = "select id, name, '-' as hash from folder " +
+                String folderQuery = "select id, name, 'folder' as type, '-' as hash from folder " +
                 "where parent_id="+ parentID + " order by name";
 
-                String mediaQuery = "select media_item.id, name, hash from media_item " +
+                String mediaQuery = "select media_item.id, name, type, hash from media_item " +
                 "join folder_entry on media_item.id=folder_entry.item_id " +
                 "where folder_id=" + parentID + " " +
                 "order by index";
@@ -441,11 +486,6 @@ public class WebServices extends WebService {
         }
     }
 
-    public ServiceResponse saveIndex(ServiceRequest request) throws Exception {
-        request.parseJson();
-        return getIndex(request);
-    }
-
 
     private void getSubFolders(long parentID, ArrayList<Long> folderIDs, javaxt.sql.Connection conn) throws Exception {
         folderIDs.add(parentID);
@@ -468,6 +508,9 @@ public class WebServices extends WebService {
   //**************************************************************************
   //** getSetting
   //**************************************************************************
+  /** Custom implementation of a Setting model get request. Returns the
+   *   "value" for a requested "key" in plain text.
+   */
     public ServiceResponse getSetting(ServiceRequest request) throws Exception {
         var key = request.getParameter("key").toString();
         var setting = Setting.get("key=",key.toLowerCase());
@@ -480,11 +523,20 @@ public class WebServices extends WebService {
   //**************************************************************************
   //** saveSetting
   //**************************************************************************
+  /** Custom implementation of a Setting model save request. Looks for a
+   *  "value" parameter in the payload of the request, if the parameter is not
+   *  found using conventional means. Also validates certian key/value pairs
+   *  before creating/updating a setting.
+   */
     public ServiceResponse saveSetting(ServiceRequest request) throws Exception {
 
       //Validate user
-        var user = (User) request.getUser();
-        if (!isAdmin(user)) return new ServiceResponse(403, "Forbidden");
+        Integer accessLevel;
+        var user = (javaxt.media.models.User) request.getUser();
+        try(Connection conn = database.getConnection()){
+            accessLevel = SecurityFilter.getAccessLevel(user, "SysAdmin", conn);
+        }
+        if (accessLevel<5) return new ServiceResponse(403, "Forbidden");
 
 
       //Parse payload
@@ -548,17 +600,6 @@ public class WebServices extends WebService {
 
 
   //**************************************************************************
-  //** deleteSetting
-  //**************************************************************************
-  /** Overrides the default deleteSetting method to prevent settings from
-   *  being deleted.
-   */
-    public ServiceResponse deleteSetting(ServiceRequest request) throws Exception {
-        return new ServiceResponse(403, "Forbidden");
-    }
-
-
-  //**************************************************************************
   //** dir
   //**************************************************************************
   /** Custom method used to browse files on the server, upload new files,
@@ -567,46 +608,49 @@ public class WebServices extends WebService {
     public ServiceResponse dir(ServiceRequest request) throws Exception {
 
       //Validate user
-        var user = (User) request.getUser();
-        if (!isAdmin(user)) return new ServiceResponse(403, "Forbidden");
-
-        try{
-
-            String op = request.getPath(0).toString();
-            if (op==null) op = "";
-            else op = op.toLowerCase().trim();
-
-            if (op.equals("upload")){
-                return fileService.upload(request, (javaxt.utils.Record record)->{
-
-                    String path = record.get("path").toString();
-                    javaxt.io.File file = (javaxt.io.File) record.get("file").toObject();
-                    path += file.getName();
-
-                    //NotificationService.notify(record.get("op").toString(), "File", new javaxt.utils.Value(path));
-                });
-            }
-            else if (op.equals("download")){
-                ServiceResponse response = fileService.getFile(request);
-                String fileName = response.get("name").toString();
-                response.setContentDisposition(fileName);
-                return response;
-            }
-            else{
-                return fileService.getList(request);
-            }
+        Integer accessLevel;
+        var user = (javaxt.media.models.User) request.getUser();
+        try(Connection conn = database.getConnection()){
+            accessLevel = SecurityFilter.getAccessLevel(user, "SysAdmin", conn);
         }
-        catch(Exception e){
-            return new ServiceResponse(e);
+        if (accessLevel<5) return new ServiceResponse(403, "Forbidden");
+
+
+      //Generate response
+        String op = request.getPath(0).toString();
+        if (op==null) op = "";
+        else op = op.toLowerCase().trim();
+
+        if (op.equals("upload")){
+            return fileService.upload(request, (javaxt.utils.Record record)->{
+
+                String path = record.get("path").toString();
+                javaxt.io.File file = (javaxt.io.File) record.get("file").toObject();
+                path += file.getName();
+
+                //NotificationService.notify(record.get("op").toString(), "File", new javaxt.utils.Value(path));
+            });
+        }
+        else if (op.equals("download")){
+            ServiceResponse response = fileService.getFile(request);
+            String fileName = response.get("name").toString();
+            response.setContentDisposition(fileName);
+            return response;
+        }
+        else{
+            return fileService.getList(request);
         }
     }
 
 
   //**************************************************************************
-  //** isAdmin
+  //** getRecordset
   //**************************************************************************
-    private boolean isAdmin(User user){
-        return true;
+  /** Used to update queries and modify payloads for model-related services.
+   */
+    protected Recordset getRecordset(ServiceRequest request, String op,
+        Class c, String sql, Connection conn) throws Exception {
+        return SecurityFilter.getRecordset(request, op, c, sql, conn);
     }
 
 
@@ -640,9 +684,23 @@ public class WebServices extends WebService {
         }
         else{
 
+          //Get service request
+            ServiceRequest req = new ServiceRequest(request);
+
+
+          //Parse payload as needed
+            boolean parseJson = true;
+            String contentType = request.getContentType();
+            if (contentType!=null){
+                if (contentType.startsWith("multipart/form-data")){ //e.g. media upload
+                    parseJson = false;
+                }
+            }
+            if (parseJson) req.parseJson();
+
+
           //Get service response
             ServiceResponse rsp;
-            ServiceRequest req = new ServiceRequest(request);
             if (webservices.containsKey(service)){
                 if (path.startsWith("/")) path = path.substring(1);
                 path = path.substring(service.length());
