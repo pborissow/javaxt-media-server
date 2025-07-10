@@ -2,6 +2,7 @@ package javaxt.media.server;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 import javaxt.json.*;
 import javaxt.sql.Model;
@@ -161,6 +162,18 @@ public class Config {
                 }
 
 
+              //Update connection pool size as needed
+                javaxt.io.Jar jar = new javaxt.io.Jar(Config.class);
+                long numModels = Arrays.stream(jar.getClasses())
+                    .filter(c -> javaxt.sql.Model.class.isAssignableFrom(c))
+                    .count();
+                int minConnections = (int) Math.ceil(numModels*1.5);
+                if (database.getConnectionPoolSize()<minConnections){
+                    database.setConnectionPoolSize(minConnections);
+                    //System.out.println("Increased connection pool to " + minConnections);
+                }
+
+
               //Get database schema
                 String schema = null;
                 JSONValue v = config.get("schemaFile");
@@ -172,18 +185,7 @@ public class Config {
 
 
               //Initialize schema (create tables, indexes, etc)
-                boolean schemaInitialized = DbUtils.initSchema(database, schema, null);
-
-
-              //Insert date into the settings table
-                if (schemaInitialized){
-                    try(javaxt.sql.Connection conn = database.getConnection()){
-                        conn.execute(
-                            "insert into setting(key,value) " +
-                            "values('db_date','"+ new javaxt.utils.Date().toLong()+"')"
-                        );
-                    }
-                }
+                initSchema(schema, database);
 
 
               //Enable database caching
@@ -200,6 +202,64 @@ public class Config {
         }
 
         return database;
+    }
+    
+
+  //**************************************************************************
+  //** initSchema
+  //**************************************************************************
+    private static void initSchema(String schema, javaxt.sql.Database database) throws Exception {
+
+      //Initialize schema (create tables, indexes, etc)
+        boolean schemaInitialized = DbUtils.initSchema(database, schema, null);
+
+
+      //Insert data
+        if (schemaInitialized){
+            try(javaxt.sql.Connection conn = database.getConnection()){
+
+              //Insert date into the settings table
+                conn.execute(
+                    "insert into setting(key,value) " +
+                    "values('db_date','"+ new javaxt.utils.Date().toLong()+"')"
+                );
+
+
+              //Disable authentication
+                conn.execute(
+                    "insert into setting(key,value) " +
+                    "values('auth_status','disabled')"
+                );
+
+
+              //Create default user
+                String userTable = "\"user\"";
+                conn.execute("insert into person(id) values(-1)");
+                conn.execute(
+                    "insert into " + userTable + "(id,person_id,status) " +
+                    "values(-1,-1,1)"
+                );
+
+
+              //Create components
+                for (String component : new String[]{"SysAdmin","UserAdmin","Media","Contact"}){
+                    conn.execute("insert into component(key) values('" + component + "')");
+                }
+
+
+              //Grant default user admin access to all components
+                var componentIDs = new ArrayList<Long>();
+                for (var r : conn.getRecords("select id from component")){
+                    componentIDs.add(r.get(0).toLong());
+                }
+                for (var componentID : componentIDs){
+                    conn.execute(
+                        "insert into user_access(user_id,component_id,level) " +
+                        "values(-1," + componentID + ",5)"
+                    );
+                }
+            }
+        }
     }
 
 
