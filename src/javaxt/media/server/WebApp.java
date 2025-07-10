@@ -12,11 +12,15 @@ import javaxt.express.*;
 import javaxt.io.Directory;
 import javaxt.http.servlet.*;
 import javaxt.utils.ThreadPool;
+import javaxt.encryption.BCrypt;
 import javaxt.express.utils.DateUtils;
 import static javaxt.utils.Console.console;
 import static javaxt.utils.Timer.setInterval;
 import javaxt.http.websocket.WebSocketListener;
 import javaxt.express.notification.NotificationService;
+
+import javaxt.media.models.User;
+import javaxt.media.models.UserAuthentication;
 
 
 import org.java_websocket.drafts.Draft_6455;
@@ -82,6 +86,65 @@ public class WebApp extends HttpServlet {
 
                 }
             }
+
+
+
+          //Instantiate authenticator
+            setAuthenticator(new javaxt.express.Authenticator(){
+
+                public String getUsername(){
+                    if (isAuthDisabled()) return "admin";
+                    else return super.getUsername();
+                }
+
+                public java.security.Principal getPrinciple(){
+
+                  //Returned cached user if exists
+                    User user = (User) getUser();
+                    if (user!=null) return user;
+
+
+                  //Parse credentials and get user
+                    try{
+                        String username = getUsername();
+                        if (username.equals("admin") && isAuthDisabled()){
+                            user = new User(-1);
+                        }
+                        else{
+
+                            String password = getCredentials()[1];
+                            if (password!=null){
+
+                                UserAuthentication userAuth = UserAuthentication.get(
+                                "service=", "database", "key=", username);
+
+                                String passwordHash = userAuth.getValue();
+                                if (passwordHash!=null){
+                                    if (BCrypt.checkpw(password, passwordHash)){
+                                        user = userAuth.getUser();
+                                        //if (user.getStatus()!=1) user = null;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch(Exception e){}
+
+                  //Update cache and return user
+                    setUser(user);
+                    return user;
+                }
+
+                private boolean isAuthDisabled(){
+                    try{
+                        String authStatus = Config.getSetting("auth_status");
+                        return authStatus.equals("disabled");
+                    }
+                    catch(Exception e){
+                        return false;
+                    }
+                }
+            });
         }
         catch(Exception e){
             NotificationService.stop();
@@ -150,10 +213,9 @@ public class WebApp extends HttpServlet {
 
 
 
-        //Pass the request to the authenticator. If it can handle the request, return early.
-        //javaxt.express.Authenticator authenticator = (javaxt.express.Authenticator) getAuthenticator(request);
-        //if (authenticator!=null && authenticator.handleRequest(service, response)) return;
-
+      //Pass the request to the authenticator. If it can handle the request, return early.
+        javaxt.express.Authenticator authenticator = (javaxt.express.Authenticator) getAuthenticator(request);
+        if (authenticator!=null && authenticator.handleRequest(service, response)) return;
 
 
 
