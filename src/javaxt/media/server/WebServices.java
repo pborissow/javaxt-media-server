@@ -53,6 +53,11 @@ public class WebServices extends WebService {
         "select value from setting where key='db_date'").get(0).toLong();
 
 
+      //Init apps and models
+        Config.initApps();
+        Config.initModels();
+
+
       //Register models
         javaxt.io.Jar jar = new javaxt.io.Jar(this.getClass());
         for (Class c : jar.getClasses()){
@@ -509,11 +514,16 @@ public class WebServices extends WebService {
   //** getSetting
   //**************************************************************************
   /** Custom implementation of a Setting model get request. Returns the
-   *   "value" for a requested "key" in plain text.
+   *  "value" for a requested "key" in plain text.
    */
     public ServiceResponse getSetting(ServiceRequest request) throws Exception {
+
         var key = request.getParameter("key").toString();
-        var setting = Setting.get("key=",key.toLowerCase());
+        if (key==null) key = request.getPath(1).toString();
+        if (key!=null) key = key.trim().toLowerCase();
+        if (key==null || key.isEmpty()) return new ServiceResponse(400, "Key is required");
+
+        var setting = Setting.get("key=",key);
         var value = setting==null ? null : setting.getValue();
         if (value==null) return new ServiceResponse(404);
         else return new ServiceResponse(value);
@@ -545,7 +555,8 @@ public class WebServices extends WebService {
 
       //Get key
         var key = request.getParameter("key").toString();
-        if (key!=null) key = key.toLowerCase();
+        if (key==null) key = request.getPath(1).toString();
+        if (key!=null) key = key.trim().toLowerCase();
         if (key==null || key.isEmpty()) return new ServiceResponse(400, "Key is required");
 
 
