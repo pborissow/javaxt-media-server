@@ -239,6 +239,65 @@ public class FileIndex {
 
 
   //**************************************************************************
+  //** createThumbnail
+  //**************************************************************************
+  /** Used to create a thumbnail for a given file. Assumes the file is
+   *  indexed and in the database but missing a thumbnail.
+   */
+    public void createThumbnail(javaxt.io.File file) throws Exception {
+
+
+        try (Connection conn = database.getConnection()){
+
+          //Check if file exists
+            Long fileID = getFileID(file, conn);
+            if (fileID==null) throw new Exception("File not found");
+
+          //Check if thumbnail exists
+            javaxt.io.File thumbnailFile = getThumbnailFile(file);
+            Long thumbnailFileID = getFileID(thumbnailFile, conn);
+            if (thumbnailFileID!=null) return;
+
+
+          //Get mediaID
+            Long mediaID = null;
+            javaxt.sql.Record record = conn.getRecord(
+            "select media_item_id from media_item_file where file_id=" + fileID);
+            if (record!=null) mediaID = record.get(0).toLong();
+            if (mediaID==null) throw new Exception("mediaID not found");
+
+
+          //Get primary file
+            javaxt.io.File primaryFile = null;
+            record = conn.getRecord(
+            "select file_id from media_item_file where " +
+            "media_item_id=" + mediaID + " and is_primary=true");
+            if (record!=null){
+                fileID = record.get(0).toLong();
+                if (fileID!=null) primaryFile = getFile(fileID, conn);
+            }
+            if (primaryFile==null) throw new Exception("Primary file not found");
+
+
+          //Get image
+            javaxt.io.Image image = imageUtils.getImage(primaryFile);
+            if (image==null) throw new Exception("Failed to extract image from file");
+
+
+          //Create thumbnail
+            createThumbnail(image, thumbnailFile);
+            javaxt.media.models.File tn = getOrCreateFile(thumbnailFile, conn);
+            conn.execute(
+                "insert into media_item_file(media_item_id, file_id, is_primary) " +
+                "values (" + mediaID + "," + tn.getID() + ",false)"
+            );
+
+        }
+
+    }
+
+
+  //**************************************************************************
   //** deleteOrphans
   //**************************************************************************
   /** Checks whether files in the database still exist on disk. If not, the
@@ -757,12 +816,32 @@ public class FileIndex {
 
 
   //**************************************************************************
+  //** getFileID
+  //**************************************************************************
+  /** Returns an ID associated with a javaxt.io.File. Returns null if the file
+   *  is not found in the database.
+   */
+    public static Long getFileID(javaxt.io.File file, Connection conn) throws Exception {
+        Long fileID = null;
+        javaxt.sql.Record record = conn.getRecord(
+        "select file.id from file " +
+        "join path on file.path_id=path.id where " +
+        "dir='" + file.getDirectory().toString().replace("\\", "/").replace("'", "''") + "' and " +
+        "file.name='" + file.getName(false).replace("'", "''") + "' and " +
+        "file.extension='" + file.getExtension() + "'"
+        );
+        if (record!=null) fileID = record.get(0).toLong();
+        return fileID;
+    }
+
+
+  //**************************************************************************
   //** getFile
   //**************************************************************************
   /** Returns a javaxt.io.File associated with a given file ID. Returns null
    *  if the file is not found in the database.
    */
-    private javaxt.io.File getFile(long fileID, Connection conn) throws Exception {
+    public static javaxt.io.File getFile(long fileID, Connection conn) throws Exception {
         javaxt.sql.Record record = conn.getRecord(
         "select file.name, file.extension, dir from file " +
         "join path on file.path_id=path.id where file.id="+fileID);
@@ -844,10 +923,9 @@ public class FileIndex {
 
                                   //Special case for iPhones with an "E" sidecar
                                   //file. These are often cropped or smaller
-                                  //versions of the original file. 
+                                  //versions of the original file.
                                     if (fileName.startsWith("img_e")){
                                         var f = "img_" + fileName.substring(5);
-                                        console.log("Found E!", fileName, f);
                                         arr = files.get(f);
                                     }
 
@@ -1202,22 +1280,26 @@ public class FileIndex {
             if (mediaIDs.isEmpty()){ //if no records, create a new MediaItem
 
 
-              //Get image from file
+              //Get image and metadata from file
                 Image image = null;
+                JSONObject metadata;
                 if (imageUtils.isMovie(primaryFile)){
+                    FFmpeg ffmpeg = imageUtils.getFFmpeg();
+
 
                   //Create image from a frame in the movie/video
                     if (primaryFile.getExtension().equalsIgnoreCase("MP4")){
                         image = imageUtils.getImage(primaryFile);
                     }
-                    else{ //create an MP4 for streaming
+                    else{
 
+                      //Create an MP4 for streaming
                         javaxt.io.File mp4 = new javaxt.io.File(
                             primaryFile.getDirectory(),
                             primaryFile.getName(false) + ".mp4"
                         );
+                        if (!mp4.exists()) ffmpeg.createMP4(primaryFile, mp4);
 
-                        if (!mp4.exists()) imageUtils.createMP4(primaryFile, mp4);
 
                         if (mp4.exists()){
 
@@ -1232,25 +1314,32 @@ public class FileIndex {
 
                         if (image==null) image = imageUtils.getImage(primaryFile);
                     }
+
+                  //Get video metadata
+                    metadata = ffmpeg.getMetadata(primaryFile);
+
                 }
                 else{
 
                     image = imageUtils.getImage(primaryFile);
+                    if (image==null){
+                        metadata = new JSONObject();
+                    }
+                    else{
+                        metadata = image.getMetadata();
+                    }
                 }
 
 
 
-              //Get metadata and create thumbnail
-                JSONObject metadata;
+              //Get pHash and create thumbnail from image
                 Long pHash;
                 javaxt.io.File tn;
                 if (image==null){
-                    metadata = new JSONObject();
                     pHash = null;
                     tn = null;
                 }
                 else{
-                    metadata = image.getMetadata();
                     pHash = image.getPHash();
                     try{
                         tn = getThumbnailFile(primaryFile);
@@ -1279,7 +1368,15 @@ public class FileIndex {
 
                     rs.addNew();
                     rs.setValue("name", primaryFile.getName(false));
-                    //rs.setValue("date", cint(primaryFile.getDate()));
+
+
+                    var mediaType = primaryFile.getContentType();
+                    if (mediaType!=null && mediaType.contains("/")){
+                        mediaType = mediaType.substring(0, mediaType.indexOf("/"));
+                        if (mediaType.equals("application")) mediaType = null;
+                    }
+                    rs.setValue("type", mediaType);
+
 
                     if (pHash!=null){
                         rs.setValue("hash", Long.toBinaryString(pHash));
@@ -1539,7 +1636,8 @@ public class FileIndex {
 
               //Special case for short clips (e.g. MOV sidecar file for iPhones)
                 if (imageUtils.isMovie(file)){
-                    Double duration = imageUtils.getDuration(file);
+                    FFmpeg ffmpeg = imageUtils.getFFmpeg();
+                    Double duration = ffmpeg.getDuration(file);
                     if (duration!=null && duration<4.0) continue;
                 }
 
@@ -1716,9 +1814,7 @@ public class FileIndex {
         for (RRDImage.Entry e : rrd.getIndex()){
             index.put(e.getWidth(), e.getID());
         }
-        Iterator<Integer> it = index.descendingKeySet().iterator();
-        while (it.hasNext()){
-            Integer width = it.next();
+        for (Integer width : index.descendingKeySet()){
             String id = index.get(width);
             if (width<=800){
                 image = rrd.getImage(id);
