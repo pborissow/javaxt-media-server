@@ -65,6 +65,30 @@ public class ImageMagick {
         new javaxt.io.Shell(cmd).run();
 
 
+      //Sometimes ImageMagick creates multiple images and appends IDs to the
+      //end of the file names. We need to find the biggest file and delete the rest.
+        if (!tempFile.exists()){
+
+          //Find files
+            var files = new TreeMap<Long, javaxt.io.File>();
+            String filter = tempFile.getName(false) + "-*." + tempFile.getExtension();
+            for (javaxt.io.File file : tempFile.getDirectory().getFiles(filter)){
+                files.put(file.getSize(), file);
+            }
+
+          //Get biggest file and delete the rest
+            if (!files.isEmpty()){
+                String tempFileName = tempFile.getName();
+                tempFile = files.remove(files.lastKey());
+                tempFile.rename(tempFileName);
+
+                for (long key : files.keySet()){
+                    files.get(key).delete();
+                }
+            }
+        }
+
+
       //Rename temp file
         if (tempFile.exists()){
             tempFile.rename(output.getName());
