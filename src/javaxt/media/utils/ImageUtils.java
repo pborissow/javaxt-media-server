@@ -93,6 +93,14 @@ public class ImageUtils {
 
 
   //**************************************************************************
+  //** getFFmpeg
+  //**************************************************************************
+    public FFmpeg getFFmpeg(){
+        return ffmpeg;
+    }
+
+
+  //**************************************************************************
   //** addFaceDetecionModel
   //**************************************************************************
     public void addFaceDetecionModel(javaxt.io.File faceDetecionModel){
@@ -126,26 +134,6 @@ public class ImageUtils {
     public boolean isMovie(javaxt.io.File file){
         if (ffmpeg!=null) return ffmpeg.isMovie(file);
         return false;
-    }
-
-
-  //**************************************************************************
-  //** getDuration
-  //**************************************************************************
-  /** Returns the length of a movie, in seconds. Returns null if the file is
-   *  invalid or if the length cannot be determined.
-   */
-    public Double getDuration(javaxt.io.File file){
-        if (isMovie(file)) return ffmpeg.getDuration(file);
-        return null;
-    }
-
-
-  //**************************************************************************
-  //** createMP4
-  //**************************************************************************
-    public void createMP4(javaxt.io.File input, javaxt.io.File output){
-        if (ffmpeg!=null) ffmpeg.createMP4(input, output);
     }
 
 
