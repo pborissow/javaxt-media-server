@@ -2,7 +2,6 @@ package javaxt.media.server;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.stream.Collectors;
 
 import javaxt.json.*;
 import javaxt.sql.Model;
@@ -13,6 +12,7 @@ import static javaxt.utils.Console.console;
 
 import javaxt.media.utils.FFmpeg;
 import javaxt.media.utils.ImageMagick;
+import javaxt.media.models.Setting;
 
 
 //******************************************************************************
@@ -94,17 +94,59 @@ public class Config {
         config.init(json);
 
 
-
       //Add "schemaFile" to the config
-        JSONObject modelConfig = new JSONObject();
-        modelConfig.set("schema", "models/schema.sql");
-        updateFile("schema", modelConfig, configFile);
-        config.set("schemaFile", new javaxt.io.File(modelConfig.get("schema").toString()));
+        JSONObject schemaConfig = new JSONObject();
+        schemaConfig.set("schema", "models/schema.sql");
+        updateFile("schema", schemaConfig, configFile);
+        config.set("schemaFile", new javaxt.io.File(schemaConfig.get("schema").toString()));
 
 
       //Run validations
         Database database = config.getDatabase();
         if (database==null) throw new Exception("Invalid database");
+
+
+
+      //Save model settings as needed
+        var modelConfig = json.get("models").toJSONObject();
+        if (modelConfig!=null){
+            updateFile("faceDetection", modelConfig, configFile);
+            updateFile("facialRecognition", modelConfig, configFile);
+
+            String faceDetection = getSetting("face_detection");
+            if (faceDetection==null || faceDetection.isEmpty()){
+                try{
+                    var file = new javaxt.io.File(modelConfig.get("faceDetection").toString());
+                    if (file.exists()) saveSetting("face_detection", file.toString());
+                }
+                catch (Exception e){}
+            }
+
+            String facialRecognition = getSetting("facial_recognition");
+            if (facialRecognition==null || facialRecognition.isEmpty()){
+                try{
+                    var file = new javaxt.io.File(modelConfig.get("facialRecognition").toString());
+                    if (file.exists()) saveSetting("facial_recognition", file.toString());
+                }
+                catch (Exception e){}
+            }
+        }
+
+
+
+      //Get email settings and update the database as needed
+        String emailConfig = getSetting("email");
+        if (emailConfig==null || emailConfig.isEmpty()){
+            var email = config.getEmail();
+            if (email!=null){
+                emailConfig = config.toJson().get("email").toString();
+                saveSetting("email", emailConfig);
+            }
+        }
+        else{
+            config.setEmail(config.getEmail(new JSONObject(emailConfig)));
+        }
+
     }
 
 
@@ -123,6 +165,14 @@ public class Config {
   //**************************************************************************
     public static void set(String key, Object value){
         config.set(key, value);
+    }
+
+
+  //**************************************************************************
+  //** getEmail
+  //**************************************************************************
+    public static javaxt.express.email.EmailService getEmail() throws Exception {
+        return config.getEmail();
     }
 
 
@@ -203,7 +253,7 @@ public class Config {
 
         return database;
     }
-    
+
 
   //**************************************************************************
   //** initSchema
@@ -216,21 +266,11 @@ public class Config {
 
       //Insert data
         if (schemaInitialized){
+
+            saveSetting("db_date", new javaxt.utils.Date().toLong()+"");
+            saveSetting("auth", "disabled");
+
             try(javaxt.sql.Connection conn = database.getConnection()){
-
-              //Insert date into the settings table
-                conn.execute(
-                    "insert into setting(key,value) " +
-                    "values('db_date','"+ new javaxt.utils.Date().toLong()+"')"
-                );
-
-
-              //Disable authentication
-                conn.execute(
-                    "insert into setting(key,value) " +
-                    "values('auth_status','disabled')"
-                );
-
 
               //Create default user
                 String userTable = "\"user\"";
@@ -280,13 +320,39 @@ public class Config {
 
 
   //**************************************************************************
+  //** initApps
+  //**************************************************************************
+    public static void initApps() throws Exception {
+        getImageMagick();
+        getFFmpeg();
+    }
+
+
+  //**************************************************************************
   //** getSetting
   //**************************************************************************
   /** Returns a setting from the database
    */
     public static String getSetting(String key) throws Exception {
         initModels();
-        return javaxt.media.models.Setting.get("key=",key.toLowerCase()).getValue();
+        var setting = Setting.get("key=",key.toLowerCase());
+        if (setting==null) return null;
+        else return setting.getValue();
+    }
+
+
+  //**************************************************************************
+  //** saveSetting
+  //**************************************************************************
+    private static void saveSetting(String key, String value) throws Exception {
+        initModels();
+        var setting = Setting.get("key=",key.toLowerCase());
+        if (setting==null){
+            setting = new Setting();
+            setting.setKey(key.toLowerCase());
+        }
+        setting.setValue(value);
+        setting.save();
     }
 
 
@@ -294,8 +360,20 @@ public class Config {
   //** getImageMagick
   //**************************************************************************
     public static ImageMagick getImageMagick(){
-        try {return new ImageMagick(getSetting("ImageMagick"));}
-        catch(Exception e){return null;}
+        try {
+            return new ImageMagick(getSetting("ImageMagick"));
+        }
+        catch(Exception e){
+            try {
+                String path = get("apps").get("ImageMagick").toString();
+                ImageMagick app = new ImageMagick(path);
+                saveSetting("ImageMagick", path);
+                return app;
+            }
+            catch(Exception ex){
+                return null;
+            }
+        }
     }
 
 
@@ -303,8 +381,20 @@ public class Config {
   //** getFFmpeg
   //**************************************************************************
     public static FFmpeg getFFmpeg(){
-        try {return new FFmpeg(getSetting("FFmpeg"));}
-        catch(Exception e){return null;}
+        try {
+            return new FFmpeg(getSetting("FFmpeg"));
+        }
+        catch(Exception e){
+            try {
+                String path = get("apps").get("FFmpeg").toString();
+                FFmpeg app = new FFmpeg(path);
+                saveSetting("FFmpeg", path);
+                return app;
+            }
+            catch(Exception ex){
+                return null;
+            }
+        }
     }
 
 
