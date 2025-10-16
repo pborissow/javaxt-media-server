@@ -32,7 +32,7 @@ public class FileIndex {
 
     /** Must be in descending order! */
     private String[] imageSizes = new String[]{
-        "2560x1440","1920x1080", "1536x864","1366x768","1280x720", //wide desktop screens
+        "3840x2160","2560x1440","1920x1080","1536x864","1366x768","1280x720", //wide desktop screens
         "1024x768","800x600", //old screens and tablets
         "300x300", "150x100" //thumbnails
     };
