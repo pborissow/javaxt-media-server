@@ -17,6 +17,7 @@ public class Address extends javaxt.sql.Model {
     private String city;
     private String state;
     private String postalCode;
+    private String searchTerm;
     private Place place;
 
 
@@ -30,6 +31,7 @@ public class Address extends javaxt.sql.Model {
             java.util.Map.entry("city", "city"),
             java.util.Map.entry("state", "state"),
             java.util.Map.entry("postalCode", "postal_code"),
+            java.util.Map.entry("searchTerm", "search_term"),
             java.util.Map.entry("place", "place_id")
 
         ));
@@ -73,6 +75,7 @@ public class Address extends javaxt.sql.Model {
             this.city = getValue(rs, "city").toString();
             this.state = getValue(rs, "state").toString();
             this.postalCode = getValue(rs, "postal_code").toString();
+            this.searchTerm = getValue(rs, "search_term").toString();
             Long placeID = getValue(rs, "place_id").toLong();
 
 
@@ -101,6 +104,7 @@ public class Address extends javaxt.sql.Model {
         this.city = json.get("city").toString();
         this.state = json.get("state").toString();
         this.postalCode = json.get("postalCode").toString();
+        this.searchTerm = json.get("searchTerm").toString();
         if (json.has("place")){
             place = new Place(json.get("place").toJSONObject());
         }
@@ -143,6 +147,14 @@ public class Address extends javaxt.sql.Model {
 
     public void setPostalCode(String postalCode){
         this.postalCode = postalCode;
+    }
+
+    public String getSearchTerm(){
+        return searchTerm;
+    }
+
+    public void setSearchTerm(String searchTerm){
+        this.searchTerm = searchTerm;
     }
 
     public Place getPlace(){

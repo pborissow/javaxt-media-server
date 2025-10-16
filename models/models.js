@@ -79,7 +79,26 @@ var models = {
             {model: 'File',         name: 'files',      unique: true},
             {model: 'Keyword',      name: 'keywords',   unique: true}
         ],
-        indexes: ['startDate', 'endDate' ,'hash']
+        indexes: ['startDate', 'endDate', 'hash']
+    },
+
+
+
+  //**************************************************************************
+  //** MediaMatch
+  //**************************************************************************
+  /** Used to identify potentially duplicate media items
+   */
+    MediaMatch: {
+        fields: [
+            {name: 'mediaItem',         type: 'MediaItem',  required: true},
+            {name: 'matchingItem',      type: 'MediaItem',  required: true},
+            {name: 'matchInfo',         type: 'json',       required: true}, //(e.g. hamming distance)
+            {name: 'ignoreMatch',       type: 'boolean',    required: true, value: false}
+        ],
+        indexes: [
+            {name: 'idx_media_match',   type: 'unique',     field: ['mediaItem','matchingItem']}
+        ]
     },
 
 
@@ -179,7 +198,7 @@ var models = {
             {name: 'info',      type: 'json'}
         ],
         indexes: [
-            {name: 'idx_person_address', type: 'unique', field: ['name','address']}
+            {name: 'idx_person_address', type: 'unique', field: ['address','person']}
         ]
     },
 
@@ -194,7 +213,7 @@ var models = {
         fields: [
             {name: 'person',    type: 'Person',     required: true},
             {name: 'contact',   type: 'string',     required: true}, //email address, phone number, etc
-            {name: 'type',      type: 'string'}, //string literals like "phone", "email", etc
+            {name: 'type',      type: 'string',     required: true}, //string literals like "phone", "email", etc
             {name: 'info',      type: 'json'}
         ],
         indexes: [
@@ -216,7 +235,7 @@ var models = {
    */
     Place: {
         fields: [
-            {name: 'location',  type: 'geo'},
+            {name: 'location',  type: 'geo',    required: true},
             {name: 'info',      type: 'json'}
         ]
     },
@@ -251,6 +270,7 @@ var models = {
             {name: 'city',          type: 'string'},
             {name: 'state',         type: 'string'},
             {name: 'postalCode',    type: 'string'},
+            {name: 'searchTerm',    type: 'string'}, //for geocoding and deduping
             {name: 'place',         type: 'Place'}
         ]
     },
@@ -282,6 +302,24 @@ var models = {
             {name: 'thumbnail',     type: 'binary'},
             {name: 'label',         type: 'string'}, //face, landmark, etc
             {name: 'info',          type: 'json'}
+        ]
+    },
+
+
+  //**************************************************************************
+  //** FeatureMatch
+  //**************************************************************************
+  /** Used to identify matching features (e.g. faces)
+   */
+    FeatureMatch: {
+        fields: [
+            {name: 'feature',           type: 'Feature',  required: true},
+            {name: 'matchingFeature',   type: 'Feature',  required: true},
+            {name: 'matchInfo',         type: 'json',     required: true},
+            {name: 'ignoreMatch',       type: 'boolean',  required: true, value: false}
+        ],
+        indexes: [
+            {name: 'idx_feature_match', type: 'unique', field: ['feature','matchingFeature']}
         ]
     },
 
