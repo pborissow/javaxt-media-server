@@ -141,48 +141,25 @@ public class WebServices extends WebService {
 
       //Get file
         javaxt.io.File file;
-        javaxt.media.utils.RRDImage thumbnail = null;
-        try (javaxt.sql.Connection conn = database.getConnection()){
-            javaxt.media.models.File f;
-
-            var record = conn.getRecord(
-            "select file.id from media_item_file " +
-            "join file on media_item_file.file_id=file.id " +
-            "where media_item_file.media_item_id=" + mediaID +
-            " and lower(extension)='rrd'");
-
-            if (record==null){ //small images don't have an rrd
-                record = conn.getRecord(
-                "select file.id from media_item_file " +
-                "join file on media_item_file.file_id=file.id " +
-                "where media_item_file.media_item_id=" + mediaID +
-                " and is_primary=true");
-                var fileID = record.get(0).toLong();
-                f = new javaxt.media.models.File(fileID);
-            }
-            else{
-                var fileID = record.get(0).toLong();
-                f = new javaxt.media.models.File(fileID);
-                thumbnail = new javaxt.media.utils.RRDImage(f);
-            }
-
-            var dir = new javaxt.io.Directory(f.getPath().getDir());
-            file = new javaxt.io.File(dir, f.getName() + "." + f.getExtension());
-            if (!file.exists()) throw new Exception();
-
+        javaxt.media.utils.RRDImage thumbnail;
+        try{
+            Object[] arr = getImageFiles(mediaID);
+            file = (javaxt.io.File) arr[0];
+            thumbnail = (javaxt.media.utils.RRDImage) arr[1];
         }
         catch(Exception e){
-            return new ServiceResponse(404);
+            return new ServiceResponse(e);
         }
+        if (file==null || !file.exists()) return new ServiceResponse(404);
 
 
-      //Set image version number using the file date
+      //Set version number using the file date
         javaxt.utils.Date lastModified = new javaxt.utils.Date(file.getDate());
         long currVersion = lastModified.toLong();
 
 
 
-      //Get requested thumbnail version number from the url
+      //Get requested version number from the url
         javaxt.utils.URL url = request.getURL();
         long requestedVersion = 0;
         try{ requestedVersion = Long.parseLong(url.getParameter("v")); }
@@ -292,7 +269,12 @@ public class WebServices extends WebService {
         Long mediaID = getMediaID(request);
         if (mediaID==null) return new ServiceResponse(400, "id is required");
 
+
+        //TODO: Check permissions
+
+
       //Get file
+        javaxt.io.File file = null;
         try (javaxt.sql.Connection conn = database.getConnection()){
 
             var record = conn.getRecord(
@@ -305,16 +287,44 @@ public class WebServices extends WebService {
                 var fileID = record.get(0).toLong();
                 javaxt.media.models.File f = new javaxt.media.models.File(fileID);
                 var dir = new javaxt.io.Directory(f.getPath().getDir());
-                javaxt.io.File file = new javaxt.io.File(dir, f.getName() + "." + f.getExtension());
-                if (file.exists()) return new ServiceResponse(file);
+                file = new javaxt.io.File(dir, f.getName() + "." + f.getExtension());
             }
 
         }
         catch(Exception e){
 
         }
+        if (file==null || !file.exists()) return new ServiceResponse(404);
 
-        return new ServiceResponse(404);
+
+
+      //Set version number using the file date
+        javaxt.utils.Date lastModified = new javaxt.utils.Date(file.getDate());
+        long currVersion = lastModified.toLong();
+
+
+
+      //Get requested version number from the url
+        javaxt.utils.URL url = request.getURL();
+        long requestedVersion = 0;
+        try{ requestedVersion = Long.parseLong(url.getParameter("v")); }
+        catch(Exception e){}
+        long requestedDB = 0;
+        try{ requestedDB = Long.parseLong(url.getParameter("db")); }
+        catch(Exception e){}
+
+
+      //Send redirect to a newer version as needed
+        if (requestedVersion!=currVersion || requestedDB!=dbDate){
+            url.setParameter("v", currVersion+"");
+            url.setParameter("db", dbDate+"");
+            String location = url.toString();
+            return new ServiceResponse(301, location);
+        }
+
+
+      //If we're still here, return the file
+        return new ServiceResponse(file);
     }
 
 
@@ -340,6 +350,70 @@ public class WebServices extends WebService {
         }
 
         return new ServiceResponse(404);
+    }
+
+
+  //**************************************************************************
+  //** getThumbnails
+  //**************************************************************************
+  /** Returns a list of all the thumbnail sizes available for a given mediaID
+   */
+    public ServiceResponse getThumbnails(ServiceRequest request) throws Exception {
+
+      //Get mediaID
+        Long mediaID = getMediaID(request);
+        if (mediaID==null) return new ServiceResponse(400, "id is required");
+
+
+        //TODO: Check permissions
+
+
+      //Get file
+        javaxt.io.File file;
+        javaxt.media.utils.RRDImage thumbnail;
+        try{
+            Object[] arr = getImageFiles(mediaID);
+            file = (javaxt.io.File) arr[0];
+            thumbnail = (javaxt.media.utils.RRDImage) arr[1];
+        }
+        catch(Exception e){
+            return new ServiceResponse(e);
+        }
+        if (file==null || !file.exists()) return new ServiceResponse(404);
+
+
+
+      //Set image version number using the file date
+        javaxt.utils.Date lastModified = new javaxt.utils.Date(file.getDate());
+        long currVersion = lastModified.toLong();
+
+
+
+      //Get requested version number from the url
+        javaxt.utils.URL url = request.getURL();
+        long requestedVersion = 0;
+        try{ requestedVersion = Long.parseLong(url.getParameter("v")); }
+        catch(Exception e){}
+        long requestedDB = 0;
+        try{ requestedDB = Long.parseLong(url.getParameter("db")); }
+        catch(Exception e){}
+
+
+      //Send redirect to a newer version as needed
+        if (requestedVersion!=currVersion || requestedDB!=dbDate){
+            url.setParameter("v", currVersion+"");
+            url.setParameter("db", dbDate+"");
+            String location = url.toString();
+            return new ServiceResponse(301, location);
+        }
+
+        JSONArray arr = new JSONArray();
+        if (thumbnail!=null){
+            for (javaxt.media.utils.RRDImage.Entry entry : thumbnail.getIndex()){
+                arr.add(entry.getWidth()+"x"+entry.getHeight());
+            }
+        }
+        return new ServiceResponse(arr);
     }
 
 
@@ -651,6 +725,49 @@ public class WebServices extends WebService {
         else{
             return fileService.getList(request);
         }
+    }
+
+
+  //**************************************************************************
+  //** getImageFiles
+  //**************************************************************************
+    private Object[] getImageFiles(long mediaID) throws Exception {
+
+        javaxt.io.File file = null;
+        javaxt.media.utils.RRDImage thumbnail = null;
+        try (javaxt.sql.Connection conn = database.getConnection()){
+            javaxt.media.models.File f = null;
+
+            var record = conn.getRecord(
+            "select file.id from media_item_file " +
+            "join file on media_item_file.file_id=file.id " +
+            "where media_item_file.media_item_id=" + mediaID +
+            " and lower(extension)='rrd'");
+
+            if (record==null){ //small images don't have an rrd
+                record = conn.getRecord(
+                "select file.id from media_item_file " +
+                "join file on media_item_file.file_id=file.id " +
+                "where media_item_file.media_item_id=" + mediaID +
+                " and is_primary=true");
+                if (record!=null){
+                    var fileID = record.get(0).toLong();
+                    f = new javaxt.media.models.File(fileID);
+                }
+            }
+            else{
+                var fileID = record.get(0).toLong();
+                f = new javaxt.media.models.File(fileID);
+                thumbnail = new javaxt.media.utils.RRDImage(f);
+            }
+
+            if (f!=null){
+                var dir = new javaxt.io.Directory(f.getPath().getDir());
+                file = new javaxt.io.File(dir, f.getName() + "." + f.getExtension());
+            }
+        }
+
+        return new Object[]{file, thumbnail};
     }
 
 
