@@ -160,7 +160,7 @@ var models = {
             {name: 'info',       type: 'json'}
         ],
         constraints: [
-            {name: 'gender',        length: 1}
+            {name: 'gender',     length: 1}
         ]
     },
 
@@ -222,6 +222,23 @@ var models = {
     },
 
 
+  //**************************************************************************
+  //** PersonFeature
+  //**************************************************************************
+  /** Used to link a feature extracted from a media item to a person
+   */
+    PersonFeature: {
+        fields: [
+            {name: 'feature',   type: 'Feature',    required: true},
+            {name: 'person',    type: 'Person',     required: true},
+            {name: 'info',      type: 'json'}
+        ],
+        indexes: [
+            {name: 'idx_person_feature', type: 'unique', field: ['feature','person']}
+        ]
+    },
+
+
 
 //@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
@@ -257,6 +274,24 @@ var models = {
             {name: 'idx_place_name', type: 'unique', field: ['name','place']}
         ]
     },
+
+
+  //**************************************************************************
+  //** PlaceMedia
+  //**************************************************************************
+  /** Used to link a media item to a place
+   */
+    PlaceMedia: {
+        fields: [
+            {name: 'media',     type: 'MediaItem', required: true},
+            {name: 'place',     type: 'Place',     required: true},
+            {name: 'info',      type: 'json'}
+        ],
+        indexes: [
+            {name: 'idx_place_media', type: 'unique', field: ['media','place']}
+        ]
+    },
+
 
 
   //**************************************************************************
@@ -320,42 +355,6 @@ var models = {
         ],
         indexes: [
             {name: 'idx_feature_match', type: 'unique', field: ['feature','matchingFeature']}
-        ]
-    },
-
-
-
-  //**************************************************************************
-  //** MediaPerson
-  //**************************************************************************
-  /** Used to associate a person to a media item.
-   */
-    MediaPerson: {
-        fields: [
-            {name: 'item',          type: 'MediaItem',  required: true},
-            {name: 'person',        type: 'Person',     required: true},
-            {name: 'info',          type: 'json'}
-        ],
-        hasMany: [
-            {model: 'Feature',      name: 'features'}
-        ]
-    },
-
-
-
-  //**************************************************************************
-  //** MediaPlace
-  //**************************************************************************
-  /** Used to associate a place to a media item.
-   */
-    MediaPlace: {
-        fields: [
-            {name: 'item',          type: 'MediaItem',  required: true},
-            {name: 'place',         type: 'Place',      required: true},
-            {name: 'info',          type: 'json'}
-        ],
-        hasMany: [
-            {model: 'Feature',      name: 'features'}
         ]
     },
 
