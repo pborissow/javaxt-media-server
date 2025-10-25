@@ -297,6 +297,97 @@ public class OpenCV {
   //**************************************************************************
   //** getMat
   //**************************************************************************
+  /** Returns a Mat for a thumbnail of a face, extracted from an image file.
+   *  @param thumbnail Thumbnail image
+   *  @param coordinates JSONObject representing the coordinates of the
+   *  thumbnail relative to the original image
+   *  @param mat Detection Mat of the face
+   *  @param matImageWidth Width of the image used to generate the detection.
+   *  May be smaller than the original image.
+   *  @param matImageHeight Height of the image used to generate the detection.
+   *  May be smaller than the original image.
+   *  @param sourceImageWidth Width of the original image. Thumbnail
+   *  coordinates are relative to this image.
+   *  @param sourceImageHeight Height of the original image. Thumbnail
+   *  coordinates are relative to this image.
+   */
+    public static Mat getMat(javaxt.io.Image thumbnail, JSONObject coordinates,
+        JSONObject mat, int matImageWidth, int matImageHeight,
+        int sourceImageWidth, int sourceImageHeight){
+
+
+      //Get thumbnail image to determine its dimensions
+        int thumbWidth = thumbnail.getWidth();
+        int thumbHeight = thumbnail.getHeight();
+
+
+      //Get thumbnail coordinates relative to the original image. Note that
+      //the thumbWidth and thumbHeight may not match w and h because the
+      //thumbnail image image was scaled down to 300px max.
+        JSONObject r = coordinates.get("rect").toJSONObject();
+        int x = r.get("x").toInteger();
+        int y = r.get("y").toInteger();
+        int w = r.get("w").toInteger();
+        int h = r.get("h").toInteger();
+
+
+        Mat originalDetection = json2mat(mat);
+
+
+      //The original detection Mat contains coordinates relative to the detection image
+      //(matImageWidth x matImageHeight). We need to transform these coordinates to be
+      //relative to the thumbnail image (thumbWidth x thumbHeight).
+      //
+      //The transformation involves:
+      //1. Scale from detection image space to source image space
+      //2. Translate to thumbnail space (subtract thumbnail offset)
+      //3. Scale from source image space to thumbnail space
+
+      //Calculate scaling factors from detection image to source image
+        double detectionToSourceScaleX = (double) sourceImageWidth / matImageWidth;
+        double detectionToSourceScaleY = (double) sourceImageHeight / matImageHeight;
+
+      //Calculate scaling factors from source image to thumbnail
+        double sourceToThumbScaleX = (double) thumbWidth / w;  // thumbnail width / original face width
+        double sourceToThumbScaleY = (double) thumbHeight / h; // thumbnail height / original face height
+
+
+      //Create a new detection Mat with transformed coordinates
+        Mat detectionMat = originalDetection.clone();
+
+        //Transform all coordinates in the detection Mat (bounding box + facial landmarks)
+        //The detection Mat has 15 columns:
+        //  0-3: x, y, width, height (bounding box)
+        //  4-13: facial landmarks (5 points × 2 coordinates)
+        //  14: confidence score (no transformation needed)
+
+        for (int i = 0; i < 14; i += 2) {
+            //Get original coordinates (relative to detection image)
+            double detectionX = detectionMat.get(0, i)[0];
+            double detectionY = detectionMat.get(0, i + 1)[0];
+
+            //Transform coordinates to thumbnail space:
+            //1. Scale from detection image to source image space
+            double sourceX = detectionX * detectionToSourceScaleX;
+            double sourceY = detectionY * detectionToSourceScaleY;
+
+            //2. Translate to thumbnail space (subtract thumbnail offset)
+            //3. Scale from source image space to thumbnail space
+            double newX = (sourceX - x) * sourceToThumbScaleX;
+            double newY = (sourceY - y) * sourceToThumbScaleY;
+
+            //Set the transformed coordinates
+            detectionMat.put(0, i, newX);
+            detectionMat.put(0, i + 1, newY);
+        }
+
+        return detectionMat;
+    }
+
+
+  //**************************************************************************
+  //** getMat
+  //**************************************************************************
   /** Returns a Mat for an image file
    */
     public static Mat getMat(javaxt.io.File imageFile) {
