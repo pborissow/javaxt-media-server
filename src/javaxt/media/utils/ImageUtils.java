@@ -18,6 +18,9 @@ public class ImageUtils {
     private ImageMagick magick;
     private FFmpeg ffmpeg;
     private javaxt.io.File faceDetecionModel;
+    private javaxt.io.File facialRecognitionModel;
+    private Object faceDetector;
+    private Object faceRecognizer;
     private ImageUtils me = this;
     private String[] fileExtensions = new String[]{
         "jpg", "jpeg", "jpe", "jfif", //jpeg varients
@@ -113,6 +116,38 @@ public class ImageUtils {
   //**************************************************************************
     public javaxt.io.File getFaceDetecionModel(){
         return faceDetecionModel;
+    }
+
+
+    public Object getFaceDetector() throws Exception{
+        if (faceDetector==null && faceDetecionModel!=null){
+            faceDetector = OpenCV.getFaceDetector(faceDetecionModel);
+        }
+        return faceDetector;
+    }
+
+
+  //**************************************************************************
+  //** addFacialRecognitionModel
+  //**************************************************************************
+    public void addFacialRecognitionModel(javaxt.io.File facialRecognitionModel){
+        this.facialRecognitionModel = facialRecognitionModel;
+    }
+
+
+  //**************************************************************************
+  //** getFacialRecognitionModel
+  //**************************************************************************
+    public javaxt.io.File getFacialRecognitionModel(){
+        return facialRecognitionModel;
+    }
+
+
+    public Object getFaceRecognizer() throws Exception{
+        if (faceRecognizer==null && facialRecognitionModel!=null){
+            faceRecognizer = OpenCV.getFaceRecognizer(facialRecognitionModel);
+        }
+        return faceRecognizer;
     }
 
 
