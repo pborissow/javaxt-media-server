@@ -5,7 +5,9 @@ import java.util.*;
 import java.util.stream.*;
 import java.sql.PreparedStatement;
 import java.awt.image.BufferedImage;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 
 import javaxt.sql.*;
@@ -46,6 +48,19 @@ public class FileIndex {
     private Database database;
 
 
+    private double facialSimilarityThreshold = 0.363;
+
+
+    private ThreadPool matchPool;
+    private ThreadPool featurePool;
+
+
+  //Cache of recently created items. This should only be managed by addDirectory!
+    private ConcurrentHashMap<Long, String> recentMediaHashes;
+    private ConcurrentHashMap<Long, Long> recentFeatureIDs;
+
+
+
   //**************************************************************************
   //** Constructor
   //**************************************************************************
@@ -61,7 +76,8 @@ public class FileIndex {
 
         this.imageUtils = imageUtils;
         this.database = database;
-
+        recentMediaHashes = new ConcurrentHashMap<>();
+        recentFeatureIDs = new ConcurrentHashMap<>();
 
 
       //Get or create host
@@ -91,6 +107,94 @@ public class FileIndex {
             if (id==null) rootFolder.save();
             else rootFolder.setID(id);
         }
+
+
+      //Initialize thread pools
+        initMatchPools();
+
+
+      //Add shutdown hook for the thread pools
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try{ shutdown(); }
+            catch(Exception e){}
+        }));
+    }
+
+
+  //**************************************************************************
+  //** initMatchPools
+  //**************************************************************************
+  /** Initializes thread pools for asynchronous hash and face matching
+   */
+    private void initMatchPools(){
+
+
+      //Set local variables
+        String source = getClass().getSimpleName();
+        int numCPUs = Runtime.getRuntime().availableProcessors();
+
+
+      //Start thread pool for media hash matching
+        matchPool = new ThreadPool(Math.max(8, numCPUs/2), 1000){
+            public void process(Object obj){
+                CountDownLatch latch = null;
+                Long taskID = null;
+                try{
+                    var arr = (Object[]) obj;
+                    var mediaID = (Long) arr[0];
+                    var hash = (String) arr[1];
+                    latch = arr.length > 2 ? (CountDownLatch) arr[2] : null;
+                    taskID = arr.length > 3 ? (Long) arr[3] : null;
+
+                    matchHash(mediaID, hash);
+                }
+                catch(Exception e){
+                    e.printStackTrace();
+                }
+                finally{
+                    if (latch != null) latch.countDown();
+                    if (taskID!=null){
+                        JSONObject msg = new JSONObject();
+                        msg.set("taskID", taskID);
+                        NotificationService.notify("update", source, new javaxt.utils.Value(msg));
+                    }
+                }
+            }
+        }.start();
+
+
+      //Start thread pool for face feature matching
+        featurePool = new ThreadPool(Math.max(8, numCPUs/2), 1000){
+            public void process(Object obj){
+                CountDownLatch latch = null;
+                Long taskID = null;
+                try{
+                    var arr = (Object[]) obj;
+                    var mediaID = (Long) arr[0];
+                    var featureID = (Long) arr[1];
+                    latch = arr.length > 2 ? (CountDownLatch) arr[2] : null;
+                    taskID = arr.length > 3 ? (Long) arr[3] : null;
+
+                  //Get or create face recognizer model (thread-safe instance per thread)
+                    Object facialRecognitionModel = get("facialRecognitionModel", ()->{
+                        return OpenCV.getFaceRecognizer(imageUtils.getFacialRecognitionModel());
+                    });
+
+                    matchFace(featureID, facialRecognitionModel);
+                }
+                catch(Exception e){
+                    e.printStackTrace();
+                }
+                finally{
+                    if (latch != null) latch.countDown();
+                    if (taskID!=null){
+                        JSONObject msg = new JSONObject();
+                        msg.set("taskID", taskID);
+                        NotificationService.notify("update", source, new javaxt.utils.Value(msg));
+                    }
+                }
+            }
+        }.start();
     }
 
 
@@ -99,7 +203,7 @@ public class FileIndex {
   //**************************************************************************
   /** Used to index all the files in a given directory
    */
-    public void addDirectory(javaxt.io.Directory directory,
+    public synchronized void addDirectory(javaxt.io.Directory directory,
         String[] fileFilter, int numThreads, Long taskID) throws Exception {
 
       //Get name of this class (for notification purposes)
@@ -109,6 +213,9 @@ public class FileIndex {
       //
         deleteOrphans(numThreads);
 
+        var hashes = new ConcurrentHashMap<Long, String>();
+        var featureIDs = new ConcurrentHashMap<Long, ArrayList<Long>>();
+        var numSteps = new AtomicLong(0);
 
 
       //Start thread pool used to create MediaItems
@@ -140,8 +247,37 @@ public class FileIndex {
 
 
                   //Create MediaItem
-                    createMediaItem(fileIDs, folderID, folderIndex, fileFilter, faceDetector);
+                    var mediaID = createMediaItem(fileIDs, folderID, folderIndex, fileFilter, faceDetector);
 
+
+                  //Queue hashes and featureIDs for comparison
+                    if (mediaID!=null){
+                        try (Connection conn = database.getConnection()){
+
+                            javaxt.sql.Record record = conn.getRecord(
+                            "select hash from media_item where id=" + mediaID);
+                            String hash = record.get("hash").toString();
+                            if (hash!=null && !hash.isEmpty()){
+                                synchronized(hashes){
+                                    hashes.put(mediaID, hash);
+                                    numSteps.incrementAndGet();
+                                }
+                            }
+
+                            var ids = new ArrayList<Long>();
+                            for (javaxt.sql.Record r : conn.getRecords(
+                            "select id from feature where item_id=" + mediaID)){
+                                var featureID = r.get("id").toLong();
+                                ids.add(featureID);
+                                numSteps.incrementAndGet();
+                            }
+                            if (!ids.isEmpty()){
+                                synchronized(featureIDs){
+                                    featureIDs.put(mediaID, ids);
+                                }
+                            }
+                        }
+                    }
 
                 }
                 catch(Throwable e){
@@ -153,6 +289,7 @@ public class FileIndex {
                 if (taskID!=null){
                     JSONObject msg = new JSONObject();
                     msg.set("taskID", taskID);
+                    msg.set("totalRecords", numSteps.get());
                     NotificationService.notify("update", source, new javaxt.utils.Value(msg));
                 }
             }
@@ -163,16 +300,8 @@ public class FileIndex {
       //Generate list of files to process
         HashSet<Long> pathIDs = addPaths(directory, fileFilter);
         ArrayList<Long[]> fileIDs = addFiles(pathIDs, fileFilter);
+        numSteps.set(fileIDs.size());
 
-
-
-      //Update status logger with a total count
-        if (taskID!=null){
-            JSONObject msg = new JSONObject();
-            msg.set("taskID", taskID);
-            msg.set("totalRecords", fileIDs.size());
-            NotificationService.notify("update", source, new javaxt.utils.Value(msg));
-        }
 
 
 
@@ -235,6 +364,66 @@ public class FileIndex {
 
         pool.done();
         pool.join();
+
+
+
+      //Count number of features to match and create CountDownLatches
+        int totalFeatureCount = 0;
+        for (var ids : featureIDs.values()){
+            totalFeatureCount += ids.size();
+        }
+        CountDownLatch hashLatch = new CountDownLatch(hashes.size());
+        CountDownLatch featureLatch = new CountDownLatch(totalFeatureCount);
+
+
+      //Match media items
+        for (Long mediaID : hashes.keySet()){
+            String hash = hashes.get(mediaID);
+            recentMediaHashes.put(mediaID, hash);
+            matchPool.add(new Object[]{mediaID, hash, hashLatch, taskID});
+        }
+
+
+      //Match faces
+        for (Long mediaID : featureIDs.keySet()){
+            var ids = featureIDs.get(mediaID);
+            for (Long featureID : ids){
+                recentFeatureIDs.put(featureID, mediaID);
+                featurePool.add(new Object[]{mediaID, featureID, featureLatch, taskID});
+            }
+        }
+
+
+      //Wait for matching operations to complete
+        if (hashes.size() > 0) hashLatch.await();
+        if (totalFeatureCount > 0) featureLatch.await();
+
+
+      //Clear cache
+        recentMediaHashes.clear();
+        recentFeatureIDs.clear();
+    }
+
+
+  //**************************************************************************
+  //** shutdown
+  //**************************************************************************
+  /** Used to gracefully shutdown the async matching thread pools. Call this
+   *  when shutting down the service to ensure all pending matches are processed.
+   *  This method is automatically called via a shutdown hook, but can also be
+   *  called manually for explicit cleanup.
+   */
+    public void shutdown() throws InterruptedException {
+
+        if (matchPool!=null){
+            matchPool.done();
+            matchPool.join();
+        }
+
+        if (featurePool!=null){
+            featurePool.done();
+            featurePool.join();
+        }
     }
 
 
@@ -1203,7 +1392,7 @@ public class FileIndex {
    *  @param faceDetector An instance of a FaceDetectorYN used to extract
    *  faces from images.
    */
-    private void createMediaItem(Long[] fileIDs, Long folderID, Long folderIndex,
+    private Long createMediaItem(Long[] fileIDs, Long folderID, Long folderIndex,
         String[] fileFilter, FaceDetectorYN faceDetector) throws Exception {
 
 
@@ -1437,6 +1626,7 @@ public class FileIndex {
 
 
               //Extract features
+                ArrayList<Long> featureIDs = new ArrayList<>();
                 try{
 
                     ArrayList<Face> faces = getFaces(
@@ -1455,7 +1645,15 @@ public class FileIndex {
                         info.set("nmsThreshold", faceDetector.getNMSThreshold());
                         info.set("scoreThreshold", faceDetector.getScoreThreshold());
                         info.set("topK", faceDetector.getTopK());
-                        info.set("inputSize", faceDetector.getInputSize().width + "x" + faceDetector.getInputSize().height);
+                        info.set("inputSize",
+                            (int) faceDetector.getInputSize().width + "x" +
+                            (int) faceDetector.getInputSize().height
+                        );
+                        info.set("imageSize",
+                            image.getWidth() + "x" +
+                            image.getHeight()
+                        );
+
 
 
                         try (Recordset rs = conn.getRecordset(
@@ -1464,7 +1662,7 @@ public class FileIndex {
 
                                 JSONObject _face = face.toJson();
                                 info.set("confidence", face.getConfidence());
-                                info.set("mat", _face.get("mat"));
+                                info.set("mat", _face.get("detection").get("output").get("mat"));
 
 
                               //Create thumbnail
@@ -1493,6 +1691,10 @@ public class FileIndex {
                                     "?::jsonb", info.toString()
                                 ));
                                 rs.update();
+
+                              //Capture feature ID for comparison
+                                Long featureID = rs.getGeneratedKey().toLong();
+                                if (featureID!=null) featureIDs.add(featureID);
 
                             }
                         }
@@ -1587,7 +1789,302 @@ public class FileIndex {
                     rs.update();
                 }
             }
+
+            return mediaID;
         }
+    }
+
+
+  //**************************************************************************
+  //** matchHash
+  //**************************************************************************
+  /** Used to compare a media item's hash against all other hashes and create
+   *  match records when the Hamming Distance is 0.
+   */
+    private ArrayList<Long> matchHash(Long mediaID, String hash) throws Exception {
+
+        var matches = new ArrayList<Long>();
+
+      //First, compare against recently created items
+        for (var entry : recentMediaHashes.entrySet()){
+            Long targetID = entry.getKey();
+            String targetHash = entry.getValue();
+
+          //Skip self-comparison
+            if (targetID.equals(mediaID)) continue;
+
+          //Only compare if targetID < mediaID to avoid duplicate comparisons
+          //(both items will process this cache)
+            if (targetID >= mediaID) continue;
+
+          //Calculate Hamming Distance
+            int distance = Image.getHammingDistance(hash, targetHash);
+            if (distance == 0){
+                matches.add(targetID);
+            }
+        }
+
+
+      //Then, compare against existing items in the database
+        try (Connection conn = database.getConnection()){
+
+          //Get total count of items with hashes (excluding recent cache)
+            String recentIDs = "";
+            if (!recentMediaHashes.isEmpty()){
+                recentIDs = " and id not in (" +
+                    String.join(",", recentMediaHashes.keySet().stream()
+                    .map(String::valueOf).toArray(String[]::new)) +
+                ")";
+            }
+            long totalItems = conn.getRecord("select count(*) from media_item " +
+            "where hash is not null" + recentIDs).get(0).toLong();
+
+
+          //Process records
+            if (totalItems > 0){
+
+                int batchSize = 1000;
+                for (long offset = 0; offset < totalItems; offset += batchSize){
+                    for (javaxt.sql.Record record : conn.getRecords(
+                        "select id, hash from media_item " +
+                        "where hash is not null" + recentIDs + " " +
+                        "order by id limit " + batchSize + " offset " + offset)){
+
+                        Long targetID = record.get("id").toLong();
+                        String targetHash = record.get("hash").toString();
+
+                      //Calculate Hamming Distance
+                        int distance = Image.getHammingDistance(hash, targetHash);
+                        if (distance == 0){
+                            matches.add(targetID);
+                        }
+                    }
+                }
+            }
+
+
+          //Insert match records
+            for (Long matchingID : matches){
+                try{
+
+                  //Check if match already exists to avoid duplicates
+                    javaxt.sql.Record existing = conn.getRecord(
+                        "select id from media_match where " +
+                        "(media_item_id=" + mediaID + " and matching_item_id=" + matchingID + ") or " +
+                        "(media_item_id=" + matchingID + " and matching_item_id=" + mediaID + ")"
+                    );
+
+                    if (existing == null){
+
+                      //Create match info
+                        JSONObject matchInfo = new JSONObject();
+                        matchInfo.set("hamming_distance", 0);
+                        matchInfo.set("match_date", new javaxt.utils.Date());
+
+                      //Insert record
+                        Long matchID;
+                        try (Recordset rs = conn.getRecordset("select * from media_match where id=-1", false)){
+                            rs.addNew();
+                            rs.setValue("media_item_id", mediaID);
+                            rs.setValue("matching_item_id", matchingID);
+                            rs.setValue("match_info", new javaxt.sql.Function(
+                                "?::jsonb", matchInfo.toString()
+                            ));
+                            rs.setValue("ignore_match", false);
+                            rs.update();
+                            matchID = rs.getGeneratedKey().toLong();
+                        }
+
+                      //Notify listeners
+                        NotificationService.notify("create", "MediaMatch", new javaxt.utils.Value(matchID));
+                        NotificationService.notify("update", "MediaItem", new javaxt.utils.Value(mediaID));
+                    }
+                }
+                catch(Exception e){}
+            }
+        }
+
+        return matches;
+    }
+
+
+  //**************************************************************************
+  //** matchFace
+  //**************************************************************************
+  /** Used to compare a face against other faces and create match records when
+   *  similarity threshold is met. Comparisons are made against recently
+   *  created features first, then matches are made against the entire
+   *  database.
+   */
+    private ArrayList<Long> matchFace(Long featureID, Object facialRecognitionModel) throws Exception {
+
+
+        var matches = new ArrayList<Long>();
+
+        try (Connection conn = database.getConnection()){
+
+          //Get detection Mat and image Mat for this feature
+            javaxt.sql.Record r = conn.getRecord(
+            "select coordinates, info, thumbnail from feature where id=" + featureID);
+            var thumbnail = new javaxt.io.Image((byte[]) r.get("thumbnail").toObject());
+            org.opencv.core.Mat detection1 = getDetectionMat(r, thumbnail);
+            org.opencv.core.Mat image1 = OpenCV.getMat(thumbnail);
+
+
+
+          //Create list of IDs to compare, skipping recent features that were
+          //analyzed in a prior run (targetID < featureID)
+            var ids = new ArrayList<Long>();
+            for (Long targetID : recentFeatureIDs.keySet()){
+                if (!targetID.equals(featureID) && targetID < featureID){
+                    ids.add(targetID);
+                }
+            }
+
+
+          //Match recent features
+            if (!ids.isEmpty()){
+                for (javaxt.sql.Record record : conn.getRecords(
+                    "select id, coordinates, info, thumbnail from feature " +
+                    "where id in (" + String.join(",", ids.stream()
+                    .map(String::valueOf).toArray(String[]::new)) + ")")){
+
+                    try{
+
+                      //Get thumbnail
+                        thumbnail = new javaxt.io.Image((byte[]) record.get("thumbnail").toObject());
+
+                      //Get target detection and image Mats
+                        org.opencv.core.Mat detection2 = getDetectionMat(record, thumbnail);
+                        org.opencv.core.Mat image2 = OpenCV.getMat(thumbnail);
+
+                      //Compare faces
+                        double similarity = OpenCV.compareFaces(
+                            detection1, image1,
+                            detection2, image2,
+                            facialRecognitionModel
+                        );
+                        if (similarity >= facialSimilarityThreshold){
+                            matches.add(record.get("id").toLong());
+                        }
+                    }
+                    catch(Exception e){
+                        thumbnail = null;
+                    }
+                }
+            }
+
+
+
+          //Build exclusion list for recent features
+            String excludeRecentIDs = "";
+            if (!recentFeatureIDs.isEmpty()){
+                excludeRecentIDs = " and id not in (" +
+                    String.join(",", recentFeatureIDs.keySet().stream()
+                    .map(String::valueOf).toArray(String[]::new)) +
+                ")";
+            }
+
+
+          //Match previously indexed features. Process in batches
+            int batchSize = 100; //Keep batches relatively small because we're pulling back thumbnails
+            long totalFeatures = conn.getRecord("select count(id) from feature " +
+            "where label='FACE'" + excludeRecentIDs).get(0).toLong();
+            for (long offset = 0; offset < totalFeatures; offset += batchSize){
+                for (javaxt.sql.Record record : conn.getRecords(
+                    "select id, coordinates, info, thumbnail from feature " +
+                    "where label='FACE'" + excludeRecentIDs + " " +
+                    "order by id limit " + batchSize + " offset " + offset)){
+
+                    try{
+
+                      //Get thumbnail
+                        thumbnail = new javaxt.io.Image((byte[]) record.get("thumbnail").toObject());
+
+                      //Get target detection and image Mats
+                        org.opencv.core.Mat detection2 = getDetectionMat(record, thumbnail);
+                        org.opencv.core.Mat image2 = OpenCV.getMat(thumbnail);
+
+
+                      //Compare faces
+                        double similarity = OpenCV.compareFaces(
+                            detection1, image1,
+                            detection2, image2,
+                            facialRecognitionModel
+                        );
+                        if (similarity >= facialSimilarityThreshold){
+                            matches.add(record.get("id").toLong());
+                        }
+                    }
+                    catch(Exception e){
+                        thumbnail = null;
+                    }
+                }
+            }
+
+
+          //Insert records
+            for (Long matchingID : matches){
+                try{
+
+                  //Check if match already exists
+                    javaxt.sql.Record existing = conn.getRecord(
+                        "select id from feature_match where " +
+                        "(feature_id=" + featureID + " and matching_feature_id=" + matchingID + ") or " +
+                        "(feature_id=" + matchingID + " and matching_feature_id=" + featureID + ")"
+                    );
+
+                    if (existing == null){
+
+                      //Create match info
+                        JSONObject matchInfo = new JSONObject();
+                        matchInfo.set("similarity", facialSimilarityThreshold);
+                        matchInfo.set("match_date", new javaxt.utils.Date());
+
+                      //Insert record
+                        Long matchID;
+                        try (Recordset rs = conn.getRecordset("select * from feature_match where id=-1", false)){
+                            rs.addNew();
+                            rs.setValue("feature_id", featureID);
+                            rs.setValue("matching_feature_id", matchingID);
+                            rs.setValue("match_info", new javaxt.sql.Function(
+                                "?::jsonb", matchInfo.toString()
+                            ));
+                            rs.setValue("ignore_match", false);
+                            rs.update();
+                            matchID = rs.getGeneratedKey().toLong();
+                        }
+
+                      //Notify listeners
+                        NotificationService.notify("create", "FeatureMatch", new javaxt.utils.Value(matchID));
+                        NotificationService.notify("update", "Feature", new javaxt.utils.Value(featureID));
+                    }
+                }
+                catch(Exception e){
+                }
+            }
+        }
+
+        return matches;
+    }
+
+
+  //**************************************************************************
+  //** getDetectionMat
+  //**************************************************************************
+  /** Returns an OpenCV detection Mat for a given record and thumbnail
+   */
+    public static org.opencv.core.Mat getDetectionMat(javaxt.sql.Record r, javaxt.io.Image thumbnail){
+        var info = new JSONObject(r.get("info").toString());
+        var inputSize = info.get("inputSize").toString().split("x");
+        var inputWidth = Integer.parseInt(inputSize[0]);
+        var inputHeight = Integer.parseInt(inputSize[1]);
+        var imageSize = info.get("imageSize").toString().split("x");
+        var imageWidth = Integer.parseInt(imageSize[0]);
+        var imageHeight = Integer.parseInt(imageSize[1]);
+        var mat = info.get("mat").toJSONObject();
+        var coordinates = new JSONObject(r.get("coordinates").toString());
+        return OpenCV.getMat(thumbnail, coordinates, mat, inputWidth, inputHeight, imageWidth, imageHeight);
     }
 
 
