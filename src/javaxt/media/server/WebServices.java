@@ -333,23 +333,129 @@ public class WebServices extends WebService {
   //**************************************************************************
     public ServiceResponse getFace(ServiceRequest request) throws Exception {
 
-      //Get mediaID
-        Long mediaID = getMediaID(request);
-        if (mediaID==null) return new ServiceResponse(400, "id is required");
+      //Get featureID
+        Long featureID = getFeatureID(request);
+        if (featureID==null) return new ServiceResponse(400, "id is required");
 
-      //Get faceID
-        Integer idx = request.getParameter("idx").toInteger();
-        if (idx==null) return new ServiceResponse(400, "idx is required");
+
+      //Get requested version number from the url
+        javaxt.utils.URL url = request.getURL();
+        long requestedVersion = 0;
+        try{ requestedVersion = Long.parseLong(url.getParameter("v")); }
+        catch(Exception e){}
+        long requestedDB = 0;
+        try{ requestedDB = Long.parseLong(url.getParameter("db")); }
+        catch(Exception e){}
+
+
+      //Send redirect as needed
+        if (requestedDB!=dbDate){
+            url.setParameter("db", dbDate+"");
+            String location = url.toString();
+            return new ServiceResponse(301, location);
+        }
+
+
+        byte[] thumbnail = null;
+        try(Connection conn = database.getConnection()){
+            javaxt.sql.Record record = conn.getRecord(
+                "select thumbnail from feature where id=" + featureID
+            );
+            if (record != null){
+                thumbnail = (byte[]) record.get("thumbnail").toObject();
+            }
+        }
 
       //Return image
-        Feature[] features = Feature.find("item_id=", mediaID, "label=", "FACE");
-        if (idx<features.length){
-            ServiceResponse response = new ServiceResponse(features[idx].getThumbnail());
+        if (thumbnail==null){
+            return new ServiceResponse(404);
+        }
+        else{
+            ServiceResponse response = new ServiceResponse(thumbnail);
             response.setContentType("image/jpeg");
             return response;
         }
+    }
 
-        return new ServiceResponse(404);
+
+  //**************************************************************************
+  //** getMatchingFaces
+  //**************************************************************************
+  /** Returns media items that match a given featureID (face)
+   */
+    public ServiceResponse getMatchingFaces(ServiceRequest request) throws Exception {
+
+      //Get featureID
+        Long featureID = getFeatureID(request);
+        if (featureID==null) return new ServiceResponse(400, "id is required");
+
+
+      //Find transitive matches
+        int maxDepth = 10;
+        Set<Long> matches = new HashSet<>();
+        Set<Long> currentLevel = new HashSet<>();
+        currentLevel.add(featureID);
+
+        for (int depth = 0; depth < maxDepth && !currentLevel.isEmpty(); depth++) {
+            Set<Long> nextLevel = new HashSet<>();
+
+          //Get direct matches for all features in current level
+            try (Connection conn = database.getConnection()) {
+                for (Long featureId : currentLevel) {
+
+                  //Get matches where this feature is the source
+                    for (javaxt.sql.Record record : conn.getRecords(
+                        "SELECT matching_feature_id FROM feature_match " +
+                        "WHERE feature_id = " + featureId + " AND ignore_match = false")) {
+                        Long matchId = record.get("matching_feature_id").toLong();
+                        if (!matches.contains(matchId) && !matchId.equals(featureID)) {
+                            nextLevel.add(matchId);
+                            matches.add(matchId);
+                        }
+                    }
+
+                  //Get matches where this feature is the target
+                    for (javaxt.sql.Record record : conn.getRecords(
+                        "SELECT feature_id FROM feature_match " +
+                        "WHERE matching_feature_id = " + featureId + " AND ignore_match = false")) {
+                        Long matchId = record.get("feature_id").toLong();
+                        if (!matches.contains(matchId) && !matchId.equals(featureID)) {
+                            nextLevel.add(matchId);
+                            matches.add(matchId);
+                        }
+                    }
+                }
+            }
+
+            currentLevel = nextLevel;
+        }
+
+
+      //Return media items
+        var mediaItems = new JSONArray();
+        if (!matches.isEmpty()){
+            String sql =
+            "SELECT DISTINCT mi.id, mi.name, mi.type, mi.hash FROM feature f " +
+            "JOIN media_item mi ON mi.id = f.item_id WHERE f.id IN (" +
+            matches.stream().map(Object::toString).collect(Collectors.joining(",")) +
+            ") ORDER BY mi.id" + request.getOffsetLimitStatement(database.getDriver());
+            try (Connection conn = database.getConnection()){
+                for (javaxt.sql.Record record : conn.getRecords(sql)){
+                    mediaItems.add(record.toJson());
+                }
+            }
+        }
+        return new ServiceResponse(mediaItems);
+    }
+
+
+  //**************************************************************************
+  //** getFeatureID
+  //**************************************************************************
+    public Long getFeatureID(ServiceRequest request) throws Exception {
+        Long featureID = request.getParameter("featureID").toLong();
+        if (featureID==null) featureID = request.getID();
+        return featureID;
     }
 
 
@@ -558,8 +664,7 @@ public class WebServices extends WebService {
           //Execute query and generate response
             JSONArray items = new JSONArray();
             for (javaxt.sql.Record record : conn.getRecords(sql)){
-                JSONObject item = record.toJson();
-                items.add(item);
+                items.add(record.toJson());
             }
             return new ServiceResponse(items);
         }
